@@ -295,7 +295,7 @@ class OrdinalSymbolizer:
             m0 = ms[0]
             nw0 = nws[m0]
             if sequence_path is not None or (outputs is not None):
-                tmp = tempfile.TemporaryDirectory(dir=self.spill_dir)
+                tmp = tempfile.TemporaryDirectory(dir=self.spill_dir, ignore_cleanup_errors=True)
                 raw_lo = np.lib.format.open_memmap(os.path.join(tmp.name, "lo.npy"), mode="w+", dtype=np.uint64, shape=(nw0,))
                 raw_hi = (np.lib.format.open_memmap(os.path.join(tmp.name, "hi.npy"), mode="w+", dtype=np.uint64, shape=(nw0,))
                           if not _pat.fits_uint64(m0) else None)
@@ -361,15 +361,29 @@ class OrdinalSymbolizer:
             step = max(self.chunk_size, 1)
             for p0 in range(0, nw0, step):
                 p1 = min(p0 + step, nw0)
-                h = np.zeros(p1 - p0, np.uint64) if raw_hi is None else np.asarray(raw_hi[p0:p1])
-                seq[p0:p1] = _ids_to_nodes(h, np.asarray(raw_lo[p0:p1]), keys)
+                h = np.zeros(p1 - p0, np.uint64) if raw_hi is None else np.array(raw_hi[p0:p1])
+                seq[p0:p1] = _ids_to_nodes(h, np.array(raw_lo[p0:p1]), keys)
             if isinstance(seq, np.memmap):
                 seq.flush()
             st.sequence = seq
+            _close(raw_lo, raw_hi)
             del raw_lo, raw_hi
             if tmp is not None:
+                import gc
+                gc.collect()
                 tmp.cleanup()
         return out
+
+
+def _close(*arrays):
+    """Release memory maps now (Windows cannot delete files that are still mapped)."""
+    for a in arrays:
+        mm = getattr(a, "_mmap", None)
+        if mm is not None:
+            try:
+                mm.close()
+            except (BufferError, ValueError):
+                pass
 
 
 def _node_keys(node_hi, node_lo, m):
@@ -410,7 +424,14 @@ def _finalize_to_disk(counter, out_dir: Path, common: dict, chunk: int) -> Ordin
     out_dir.mkdir(parents=True, exist_ok=True)
     d = counter.finalize_to_disk(str(out_dir))
     V, E = int(d["n_patterns"]), int(d["n_edges"])
-    raw = lambda name, k: np.memmap(out_dir / f"{name}.bin", dtype="<u8", mode="r", shape=(k,)) if k else np.zeros(0, "<u8")
+    opened = []
+
+    def raw(name, k):
+        if not k:
+            return np.zeros(0, "<u8")
+        mm = np.memmap(out_dir / f"{name}.bin", dtype="<u8", mode="r", shape=(k,))
+        opened.append(mm)
+        return mm
     m = common["m"]
     idx_t = np.uint32 if V < 2 ** 32 else np.uint64
 
@@ -419,6 +440,7 @@ def _finalize_to_disk(counter, out_dir: Path, common: dict, chunk: int) -> Ordin
         for a in range(0, k, chunk):
             dst[a:a + chunk] = src[a:a + chunk]
         dst.flush()
+        _close(dst)
         del dst
 
     to_npy("id_lo", raw("nodes_lo", V), np.uint64, V)
@@ -432,15 +454,19 @@ def _finalize_to_disk(counter, out_dir: Path, common: dict, chunk: int) -> Ordin
         keys.flush()
     else:
         keys = np.load(out_dir / "id_lo.npy", mmap_mode="r")
+    opened.append(keys)
     to_npy("pattern_counts", raw("counts", V), np.uint64, V)
     to_npy("src", raw("edge_src", E), idx_t, E)
     to_npy("weight", raw("edge_weight", E), np.uint64, E)
     dst = np.lib.format.open_memmap(out_dir / "dst.npy", mode="w+", dtype=idx_t, shape=(E,))
     dh, dl = raw("edge_dst_hi", E), raw("edge_dst_lo", E)
     for a in range(0, E, chunk):
-        dst[a:a + chunk] = _ids_to_nodes(dh[a:a + chunk], dl[a:a + chunk], keys)
+        dst[a:a + chunk] = _ids_to_nodes(np.array(dh[a:a + chunk]), np.array(dl[a:a + chunk]), keys)
     dst.flush()
-    del dst, dh, dl, keys
+    _close(dst, *opened)
+    del dst, dh, dl, keys, opened
+    import gc
+    gc.collect()
     for f in ("nodes_hi", "nodes_lo", "counts", "edge_src", "edge_dst_hi", "edge_dst_lo", "edge_weight"):
         try:
             (out_dir / f"{f}.bin").unlink()
