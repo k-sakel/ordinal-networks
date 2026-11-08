@@ -1,0 +1,36 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ordinal-networks"
+version = "0.1.0"
+description = "Fast ordinal pattern symbolisation, ordinal partition networks and their Markov/ergodic measures"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Konstantinos Sakellariou" }]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "pyarrow>=14"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+keywords = ["ordinal patterns", "permutation entropy", "ordinal partition network", "time series", "chaos", "complex networks"]
+
+[project.optional-dependencies]
+graph = ["python-igraph>=0.11", "networkx>=3"]
+test = ["pytest>=7"]
+
+[project.urls]
+Repository = "https://github.com/k-sakel/ordinal-networks"
+
+[tool.maturin]
+python-source = "python"
+module-name = "ordinal_networks._core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
