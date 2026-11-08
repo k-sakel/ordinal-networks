@@ -31,8 +31,10 @@ net.lyapunov_sum()               # 0.697  ordinal Lyapunov estimate (LyapunovSum
 
 **Windows / macOS / Linux, prebuilt wheel (no Rust needed).** Every push to `main`
 builds wheels for Python 3.10–3.13 in GitHub Actions (*Actions → latest run →
-Artifacts → `wheels-windows-latest`*); tagged versions (`v0.1.0`, …) attach them
-to a GitHub Release. Install the wheel that matches your Python:
+Artifacts → `wheels-windows-latest`*). Releases (*Releases → v0.1.0 → Assets*)
+carry the same wheels: a release is created when a version tag is pushed, or
+when a commit on `main` has `[release]` in its message (tagged from the
+version in `pyproject.toml`). Install the wheel that matches your Python:
 
 ```
 pip install ordinal_networks-0.1.0-cp312-cp312-win_amd64.whl
