@@ -192,6 +192,13 @@ on.entropy.outgrowth_ratio(sweep[m], sweep[m+1]); on.entropy.log_mean_outgrowth_
 on.entropy.entropy_table(sweep, lyapunov=True) # all estimators for every m
 ```
 
+**Units.** Shannon-type entropies of the statistics and of node rows (`permutation_entropy`,
+`conditional_entropy`, `node_link_entropy`) and `topological_permutation_entropy` are in **bits**
+by default (`base=2`). The spectral and ergodic quantities (`spectral_radius(log=True)`,
+`lyapunov_sum`, `metric_entropy_rate`, `entropy_table`) are in **nats**; multiply bits by ln 2 to
+compare. Series shorter than one window `(m - 1) * tau + 1` raise `ValueError`; a series whose
+windows all contain NaN/Inf gives an empty result with a `RuntimeWarning`.
+
 Also included:
 
 * `on.metrics`: permutation distances (Hamming, Kendall τ, Spearman footrule and ρ), plus rank numbers

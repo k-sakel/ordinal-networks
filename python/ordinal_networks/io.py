@@ -67,7 +67,7 @@ def _write_columns(cols: dict, path: Path, meta: dict):
             wr.write_table(pa.table(batch, schema=schema))
 
 
-def _cast_uint(a: np.ndarray, mx: int):
+def _cast_uint(mx: int):
     for t in (np.uint8, np.uint16, np.uint32, np.uint64):
         if mx <= np.iinfo(t).max:
             return t
@@ -97,15 +97,15 @@ def save_statistics(stats, path):
     stem = _stem(path)
     stem.parent.mkdir(parents=True, exist_ok=True)
     meta = dict(stats.metadata, format=FORMAT_VERSION, kind="statistics")
-    c = _Cast(stats.pattern_counts, _cast_uint(None, _chunked_max(stats.pattern_counts) if len(stats.pattern_counts) else 0))
+    c = _Cast(stats.pattern_counts, _cast_uint(_chunked_max(stats.pattern_counts) if len(stats.pattern_counts) else 0))
     if stats.m <= 20:
         nodes = {"id": stats.id_lo, "count": c}
     else:
         nodes = {"id_hi": stats.id_hi, "id_lo": stats.id_lo, "count": c}
     V = len(stats.pattern_counts)
-    it = _cast_uint(None, max(V - 1, 0))
+    it = _cast_uint(max(V - 1, 0))
     edges = {"src": _Cast(stats.src, it), "dst": _Cast(stats.dst, it),
-             "weight": _Cast(stats.weight, _cast_uint(None, _chunked_max(stats.weight) if len(stats.weight) else 0))}
+             "weight": _Cast(stats.weight, _cast_uint(_chunked_max(stats.weight) if len(stats.weight) else 0))}
     pn, pe = stem.with_name(stem.name + ".nodes.parquet"), stem.with_name(stem.name + ".edges.parquet")
     _write_columns(nodes, pn, meta)
     _write_columns(edges, pe, meta)

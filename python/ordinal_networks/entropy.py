@@ -17,11 +17,17 @@ import numpy as np
 from . import patterns as _pat
 
 
+def _require_windows(stats) -> None:
+    if stats.n_patterns == 0:
+        raise ValueError("no valid windows: the statistics are empty (series too short or all NaN/Inf)")
+
+
 def permutation_entropy(stats, normalized: bool = False, base: float = 2.0) -> float:
     """Shannon entropy of the pattern distribution (Bandt & Pompe).
 
-    ``normalized=True`` divides by log(m!).
+    ``normalized=True`` divides by log(m!). ``base`` is the logarithm base (default 2, i.e. bits).
     """
+    _require_windows(stats)
     p = stats.pattern_counts / stats.pattern_counts.sum()
     H = float(-np.sum(p * np.log(p)) / math.log(base))
     if normalized:
@@ -31,7 +37,10 @@ def permutation_entropy(stats, normalized: bool = False, base: float = 2.0) -> f
 
 def conditional_entropy(stats, base: float = 2.0) -> float:
     """Conditional entropy of successive patterns (MATLAB ``ConditionalEntropy``):
-    ``-sum_ij p(i,j) log( p(i,j) / p(i) )``."""
+    ``-sum_ij p(i,j) log( p(i,j) / p(i) )``. ``base`` defaults to 2 (bits)."""
+    _require_windows(stats)
+    if stats.n_transitions == 0:
+        return 0.0
     p = stats.pattern_counts / stats.pattern_counts.sum()
     t = stats.weight / stats.weight.sum()
     src = np.asarray(stats.src, dtype=np.int64)
@@ -39,7 +48,10 @@ def conditional_entropy(stats, base: float = 2.0) -> float:
 
 
 def topological_permutation_entropy(stats) -> float:
-    """Method II: log2(V) / (m - 1)."""
+    """Method II: log2(V) / (m - 1), in bits."""
+    _require_windows(stats)
+    if stats.m < 2:
+        raise ValueError("topological permutation entropy needs m >= 2")
     return math.log2(stats.n_patterns) / (stats.m - 1)
 
 

@@ -57,7 +57,8 @@ MAPS: dict[str, System] = {s.name: s for s in [
         Period32s=(4.7, -0.5), Period32=(4.7, -0.495), Mouse=(4.9, -0.48), Chaos=(6.2, -0.486),
         MouseOrbMild=(4.9, -0.54), MouseOrbWild=(4.9, -0.436), RatOrbMild=(6.2, -0.66),
         RatOrbWild=(6.2, -0.38)), "RatOrbWild", (0.1,)),
-    System("piecewise_linear", "map", 1, (), _r(Default=()), "Default", (0.3,), note="x' = x log(1/x)"),
+    System("piecewise_linear", "map", 1, (), _r(Default=()), "Default", (0.3,),
+           note="x' = x log(1/x) (MATLAB port); converges to the fixed point 1/e, so the default series is constant"),
     System("henon", "map", 2, ("a", "b"), _r(Chaos=(1.4, 0.3), BenedicksCarleson=(1.96, 0.02)), "Chaos", (0.1, 0.1)),
     System("lozi", "map", 2, ("a", "b"), _r(Chaos=(6 / 5, -2 / 15)), "Chaos", (0.1, 0.1),
            note="MATLAB form (x1, x2) -> (x2, 1 + b x1 - a|x2|)"),
@@ -73,7 +74,9 @@ MAPS: dict[str, System] = {s.name: s for s in [
         Flat=0.0, PeriodicFlat=0.05, Eye=0.25, WideEye=0.4, ChaosOnset=0.6, QuasiPeriodicChaos=0.971635,
         Islands=1.2, Chaos=2.1), "Chaos", (1.0, 2.0)),
     System("arnold_cat", "map", 2, (), _r(Chaos=()), "Chaos", (0.1234, 0.5678)),
-    System("bakers", "map", 2, (), _r(Chaos=()), "Chaos", (0.1234, 0.5678)),
+    System("bakers", "map", 2, (), _r(Chaos=()), "Chaos", (0.1234, 0.5678),
+           note="exact doubling map: in double precision x reaches 0 after ~53 iterations, so the "
+                "series is constant; use transient=0 and n < 50, or another system"),
     System("stiletto", "map", 2, (), _r(Chaos=()), "Chaos", (0.1, 0.1)),
     System("zaslavsky", "map", 2, ("Omega", "alpha", "Gamma", "epsilon"), {}, None, (0.1, 0.1),
            note="the MATLAB regime file has no values; pass params explicitly"),
@@ -173,9 +176,15 @@ def _check_collapse(out: np.ndarray, name: str, offset: int = 0):
     if same.any():
         i = int(np.argmax(same)) + offset
         import warnings
-        warnings.warn(f"{name}: trajectory collapsed onto a fixed point at n = {i} (floating-point "
-                      f"artefact); later values are constant. Use a shorter series, another x0, or "
-                      f"perturbed parameters (cf. tent/dyadic mu = 2 - 1e-12).", RuntimeWarning, stacklevel=3)
+        if same.all():
+            msg = (f"{name}: the whole returned trajectory is constant (a stable fixed point, or a "
+                   f"floating-point collapse during the transient). It carries no ordinal information: "
+                   f"use another regime/x0/params, or a shorter transient.")
+        else:
+            msg = (f"{name}: trajectory collapsed onto a fixed point at n = {i} (floating-point "
+                   f"artefact); later values are constant. Use a shorter series, another x0, or "
+                   f"perturbed parameters (cf. tent/dyadic mu = 2 - 1e-12).")
+        warnings.warn(msg, RuntimeWarning, stacklevel=3)
         return True
     return False
 

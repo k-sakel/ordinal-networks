@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -50,13 +51,30 @@ def load_series(source, column: int | str | None = None) -> np.ndarray:
                 a = np.asarray(json.load(f), dtype=np.float64)
         else:
             raise ValueError(f"unsupported file type {ext!r}")
+    elif hasattr(source, "columns") and hasattr(source, "shape") and len(source.shape) == 2:
+        # pandas / polars DataFrame: select a column by name or position
+        names = list(source.columns)
+        if column is None:
+            if len(names) != 1:
+                raise ValueError(f"DataFrame input: specify `column` (one of {names})")
+            column = names[0]
+        elif not isinstance(column, str):
+            column = names[int(column)]
+        elif column not in names:
+            raise ValueError(f"column {column!r} not found; available: {names}")
+        col = source.get_column(column) if hasattr(source, "get_column") else source[column]
+        a = np.asarray(col)
     else:
         a = np.asarray(source)
+    if np.iscomplexobj(a):
+        raise TypeError("complex-valued series are not supported; pass the real or imaginary part")
     if a.ndim == 2:
         if column is None:
             if a.shape[1] != 1:
                 raise ValueError("2-D input: specify `column`")
             column = 0
+        if isinstance(column, str):
+            raise ValueError("column names are only supported for DataFrames and parquet files; use an integer index for arrays")
         a = a[:, int(column)]
     elif a.ndim != 1:
         raise ValueError("time series must be 1-D")
@@ -163,8 +181,9 @@ class OrdinalStatistics:
         return 1.0 - self.n_patterns / _pat.factorial(self.m)
 
     def topological_permutation_entropy(self) -> float:
-        """log2(V) / (m - 1) (Bandt, Keller & Pompe 2002)."""
-        return math.log2(self.n_patterns) / (self.m - 1)
+        """log2(V) / (m - 1), in bits (Bandt, Keller & Pompe 2002)."""
+        from .entropy import topological_permutation_entropy
+        return topological_permutation_entropy(self)
 
     @property
     def metadata(self) -> dict:
@@ -248,6 +267,9 @@ class OrdinalSymbolizer:
     def encode(self, x, column=None) -> np.ndarray:
         """Pattern ID of every window of ``x`` (0 = skipped). Loads ``x`` into RAM."""
         a = np.ascontiguousarray(load_series(x, column), dtype=np.float64)
+        if len(a) < self.span:
+            raise ValueError(f"series has {len(a)} points but m={self.m}, tau={self.tau} needs at least "
+                             f"{self.span} ((m - 1) * tau + 1) to form a single window")
         hi, lo, _ = _core.encode(a, self.m, self.tau, self.w, self.ranking, self.threads)
         return _pat.join(hi, lo, self.m)
 
@@ -282,7 +304,14 @@ class OrdinalSymbolizer:
         n = len(x)
         tau, w = self.tau, self.w
         spans = {mm: (mm - 1) * tau + 1 for mm in ms}
-        nws = {mm: (0 if n < spans[mm] else (n - spans[mm]) // w + 1) for mm in ms}
+        for mm in ms:
+            if not (1 <= mm <= _pat.MAX_M):
+                raise ValueError(f"m must be in 1..{_pat.MAX_M} (got {mm})")
+            if n < spans[mm]:
+                raise ValueError(
+                    f"series has {n} points but m={mm}, tau={tau} needs at least {spans[mm]} "
+                    f"((m - 1) * tau + 1) to form a single window")
+        nws = {mm: (n - spans[mm]) // w + 1 for mm in ms}
         budget = max(self.memory_budget // max(len(ms), 1), 64 * 1024 ** 2)
         counters = {mm: _core.Counter(mm, tau, w, self.ranking, self.threads, budget, self.spill_dir) for mm in ms}
         maxspan = max(spans.values())
@@ -348,6 +377,9 @@ class OrdinalSymbolizer:
                 n_tie_pairs=int(d["n_tie_pairs"]), id_hi=d["id_hi"], id_lo=d["id_lo"],
                 pattern_counts=d["count"], src=d["src"].astype(idx_t), dst=d["dst"].astype(idx_t),
                 weight=d["weight"])
+            if V == 0:
+                warnings.warn(f"no valid windows for m={mm}: all {int(d['n_windows'])} windows contain NaN/Inf; "
+                              f"the result is empty", RuntimeWarning, stacklevel=3)
         if want_ids:
             st = out[ms[0]]
             nw0 = len(raw_lo)

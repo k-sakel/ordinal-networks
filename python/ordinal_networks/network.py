@@ -365,13 +365,19 @@ class OrdinalNetwork:
 
     # -- global measures via igraph / networkx ------------------------------
     def to_igraph(self):
-        import igraph as ig
+        try:
+            import igraph as ig
+        except ImportError as e:
+            raise ImportError("this feature needs python-igraph: pip install 'ordinal-networks[graph]'") from e
         g = ig.Graph(n=self.n_nodes, edges=np.column_stack([self.src, self.dst]).tolist(), directed=True)
         g.es["weight"] = self.weight.tolist()
         return g
 
     def to_networkx(self):
-        import networkx as nx
+        try:
+            import networkx as nx
+        except ImportError as e:
+            raise ImportError("this feature needs networkx: pip install 'ordinal-networks[graph]'") from e
         g = nx.DiGraph()
         g.add_nodes_from(range(self.n_nodes))
         g.add_weighted_edges_from(zip(self.src.tolist(), self.dst.tolist(), self.weight.tolist()))
@@ -388,15 +394,29 @@ class OrdinalNetwork:
         return shortest_path(L, directed=True, unweighted=not weighted)
 
     def characteristic_path_length(self) -> float:
+        """Mean shortest-path length over ordered pairs of distinct nodes that are
+        connected by a directed path (unreachable pairs are excluded, so the value
+        is not biased downwards when the network is not strongly connected).
+        Dense O(n^2) memory."""
         D = self.shortest_paths()
-        n = self.n_nodes
-        np.fill_diagonal(D, 0)
-        D[~np.isfinite(D)] = 0
-        return float(D.sum() / (n * (n - 1)))
+        np.fill_diagonal(D, np.inf)
+        finite = np.isfinite(D)
+        n_pairs = int(finite.sum())
+        return float(D[finite].sum() / n_pairs) if n_pairs else float("nan")
 
     def centrality(self, kind: str, **kw) -> np.ndarray:
         """Node centrality: 'betweenness', 'closeness_in', 'closeness_out', 'harmonic',
-        'eigenvector', 'katz', 'pagerank'."""
+        'eigenvector', 'katz', 'pagerank'.
+
+        * ``closeness_*``: 1 / (sum of shortest-path distances to/from the nodes that can
+          reach / be reached from the node). Not rescaled by the number of reachable nodes
+          (as in the MATLAB toolbox), so it is not comparable across networks of different size.
+        * ``harmonic``: sum over other nodes u of 1 / d(u, v), divided by n - 1 (incoming paths;
+          higher = more central, the standard definition, equal to networkx's
+          ``harmonic_centrality`` / (n - 1)).
+
+        The path-based measures use dense n x n distance matrices.
+        """
         kind = kind.lower()
         if kind in ("closeness_in", "closeness_out"):
             D = self.shortest_paths()
@@ -409,7 +429,7 @@ class OrdinalNetwork:
             with np.errstate(divide="ignore"):
                 inv = 1.0 / D
             np.fill_diagonal(inv, 0)
-            return (self.n_nodes - 1) / inv.sum(axis=0)
+            return inv.sum(axis=0) / max(self.n_nodes - 1, 1)
         if kind == "eigenvector":
             _, v = _leading_eig(self.A, which="LM")
             v = np.abs(v.real)

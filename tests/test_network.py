@@ -142,6 +142,8 @@ def test_systems():
         s = on.systems.MAPS[name]
         if not s.regimes:
             continue
+        if name in ("bakers", "piecewise_linear"):   # constant by construction; see test_robustness
+            continue
         x = on.systems.generate(name, n=1000, squeeze=False)
         assert x.shape == (1000, s.dim) and np.isfinite(x).all(), name
     for name in ("lorenz", "rossler", "chua"):
