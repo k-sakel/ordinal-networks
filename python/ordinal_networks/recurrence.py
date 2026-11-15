@@ -22,6 +22,8 @@ def order_recurrence_plot(sequence, sparse: bool | None = None):
         R[bad, :] = False
         R[:, bad] = False
         return R
+    if n == 0:
+        return sp.csr_matrix((0, 0), dtype=bool)
     order = np.argsort(s, kind="stable")
     ss = s[order]
     bounds = np.flatnonzero(np.diff(ss)) + 1

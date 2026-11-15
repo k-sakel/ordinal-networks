@@ -132,3 +132,77 @@ def test_constant_default_series_warn_explicitly(name):
         a = on.systems.generate(name, n=500, squeeze=False)
     assert np.all(a == a[0])
     assert on.systems.get_system(name).note       # the limitation is documented on the system
+
+
+# ------------------------------------------------------------------ regression tests --
+
+def test_nonfinite_points_counted_once_when_windows_do_not_touch():
+    # w > span leaves gaps between windows; the count must not depend on the chunking
+    x = np.random.default_rng(0).standard_normal(1000)
+    x[::7] = np.nan
+    expect = int(np.isnan(x).sum())
+    for w, cs in [(10, 7), (10, 1), (4, 3), (1, 5), (3, 10**6)]:
+        assert on.OrdinalSymbolizer(3, w=w, chunk_size=cs).fit(x).n_nonfinite_points == expect
+
+
+def test_row_entropies_with_sink_node_in_last_row():
+    net = on.OrdinalNetwork.from_edges([0, 1, 0], [1, 2, 2])       # node 2 has no out-links
+    assert np.allclose(net.node_link_entropy(), [1.0, 0.0, 0.0])
+    # row 0 of T^2 is (0, 0, 1/2): half of the mass has been absorbed by the sink
+    assert np.allclose(net.hierarchical_degree(2), [[2.0, math.sqrt(2)], [1.0, 1.0], [1.0, 1.0]])
+    assert net.spectral_radius(log=True) == -math.inf               # no cycles: rho(A) = 0
+
+
+def test_convert_accepts_ranking_aliases():
+    ids = np.arange(1, 25, dtype=np.uint64)
+    ref = on.patterns.convert(ids, 4, "chronological", "amplitude")
+    assert (on.patterns.convert(ids, 4, "bp", "small") == ref).all()
+    assert (on.patterns.convert(ref, 4, "small", "bp") == ids).all()
+
+
+def test_sequence_path_implies_keep_sequence(tmp_path, x):
+    st = on.OrdinalSymbolizer(3).fit(x, sequence_path=tmp_path / "seq.npy")
+    ref = on.OrdinalSymbolizer(3).fit(x, keep_sequence=True)
+    assert (np.asarray(st.sequence) == ref.sequence).all()
+    assert (np.load(tmp_path / "seq.npy") == ref.sequence).all()
+    del st
+
+
+def test_empty_sweep_and_out_of_core_edge_cases(tmp_path, x):
+    with pytest.raises(ValueError, match="no pattern lengths"):
+        on.OrdinalSymbolizer(3).sweep(x, [])
+    with pytest.warns(RuntimeWarning, match="no valid windows"):
+        st = on.OrdinalSymbolizer(3).fit(np.full(50, np.nan), output=tmp_path / "nan")
+    assert st.n_patterns == 0
+    st = on.OrdinalSymbolizer(3, chunk_size=0).fit(x, output=tmp_path / "c0")
+    assert st.n_patterns == 6
+    del st
+
+
+def test_save_network_does_not_leave_stale_node_ids(tmp_path, x):
+    stem = tmp_path / "net"
+    on.OrdinalSymbolizer(3).fit(x).network().save(stem)
+    on.OrdinalNetwork.from_edges([0, 1], [1, 0]).save(stem)
+    net = on.load_network(stem)
+    assert net.n_nodes == 2 and net.id_lo is None
+
+
+def test_poincare_gives_up_instead_of_hanging():
+    with pytest.raises(ValueError, match="crossings"):
+        on.systems.poincare("lorenz", n=5, normal=(0.0, 0.0, 1.0), offset=1e6, transient=0, max_steps=2000)
+
+
+@pytest.mark.parametrize("kw", [dict(dt=0.0), dict(dt=-0.01), dict(dt=float("nan")), dict(every=0)])
+def test_bad_step_arguments_rejected(kw):
+    for name in ("lorenz", "mackey_glass"):
+        with pytest.raises(ValueError, match="dt must be|every must be"):
+            on.systems.generate(name, n=10, transient=0, **kw)
+
+
+def test_small_helpers_edge_cases(x):
+    assert on.metrics.kendall_autocorrelation(x, 0) == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="lag"):
+        on.metrics.kendall_autocorrelation(x, len(x))
+    assert on.recurrence.order_recurrence_plot(np.zeros(0, int), sparse=True).shape == (0, 0)
+    with pytest.raises(ValueError, match="empty network"):
+        on.OrdinalNetwork.from_edges([], []).random_walk(3)

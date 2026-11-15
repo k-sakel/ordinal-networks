@@ -61,7 +61,9 @@ def kendall_autocorrelation(x, lag: int = 1) -> float:
     """Kendall rank correlation between x_t and x_{t+lag}."""
     from scipy.stats import kendalltau
     x = np.asarray(x, dtype=float)
-    return float(kendalltau(x[:-lag], x[lag:]).statistic)
+    if not 0 <= lag < len(x):
+        raise ValueError("lag must satisfy 0 <= lag < len(x)")
+    return float(kendalltau(x[:len(x) - lag], x[lag:]).statistic)
 
 
 def rank_numbers(x) -> np.ndarray:

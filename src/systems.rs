@@ -128,11 +128,15 @@ pub fn map_step(name: &str, p: &[f64], x: &mut [f64]) {
             x[1] = y;
         }
         "solenoid" => {
-            // state (x, y, theta)
-            let th = x[2];
-            x[0] = x[0] / 4.0 + 0.5 * (2.0 * PI * th).cos();
-            x[1] = x[1] / 4.0 + 0.5 * (2.0 * PI * th).sin();
-            x[2] = (2.0 * th).rem_euclid(2.0 * PI);
+            // state (x, y, theta), theta an angle in [0, 2 pi). The embedding must use
+            // cos/sin(theta): with cos/sin(2 pi theta) and theta wrapped mod 2 pi the map
+            // is discontinuous at the wrap and is not the solenoid. (theta mod 1 with
+            // cos/sin(2 pi theta) would be equivalent but the exact doubling map mod 1
+            // collapses to 0 in double precision after ~53 iterations.)
+            let (s, c) = x[2].sin_cos();
+            x[0] = x[0] / 4.0 + 0.5 * c;
+            x[1] = x[1] / 4.0 + 0.5 * s;
+            x[2] = (2.0 * x[2]).rem_euclid(2.0 * PI);
         }
         "general_henon" => {
             let x1 = p[0] - x[1] * x[1] - p[1] * x[2];

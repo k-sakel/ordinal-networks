@@ -278,14 +278,16 @@ class OrdinalSymbolizer:
         """Symbolise ``x`` (array or file path) and count patterns and transitions.
 
         keep_sequence : also keep the node index of every window
-            (``stats.sequence``; -1 = skipped). With ``sequence_path`` it is
-            written to that ``.npy`` file (memory-mapped) instead of RAM.
+            (``stats.sequence``; -1 = skipped).
+        sequence_path : write the sequence to this ``.npy`` file (memory-mapped)
+            instead of RAM; implies ``keep_sequence``.
         output : directory for out-of-core results. Pattern and transition
             tables are streamed to memory-mapped ``.npy`` files there instead of
             being assembled in RAM. Use it when the number of distinct transitions
             is very large (large m and N). Reload later with ``load_statistics(output)``.
         """
         outs = None if output is None else {self.m: Path(output)}
+        keep_sequence = keep_sequence or sequence_path is not None
         return self._run(load_series(x, column), [self.m], keep_sequence, sequence_path, progress, outs)[self.m]
 
     def sweep(self, x, m: Iterable[int], column=None, *, output_dir=None,
@@ -303,6 +305,8 @@ class OrdinalSymbolizer:
         import tempfile
         n = len(x)
         tau, w = self.tau, self.w
+        if not ms:
+            raise ValueError("no pattern lengths given")
         spans = {mm: (mm - 1) * tau + 1 for mm in ms}
         for mm in ms:
             if not (1 <= mm <= _pat.MAX_M):
@@ -341,6 +345,12 @@ class OrdinalSymbolizer:
             b = min(n, (k1 - 1) * w + maxspan) if k1 > k0 else a
             seg = np.ascontiguousarray(x[a:b], dtype=np.float64)
             # non-finite points, counted once (non-overlapping ranges)
+            if counted_upto < a:
+                # w > span: the points between the previous chunk's last window and this
+                # chunk's first window belong to no window and are not part of `seg`
+                gap = np.asarray(x[counted_upto:a], dtype=np.float64)
+                nonfinite += int(gap.size - np.count_nonzero(np.isfinite(gap)))
+                counted_upto = a
             hi_pt = b if k1 >= nw_max else min(b, k1 * w)
             if hi_pt > counted_upto:
                 part = seg[counted_upto - a: hi_pt - a]
@@ -366,19 +376,19 @@ class OrdinalSymbolizer:
         for mm in ms:
             common = dict(m=mm, tau=tau, w=w, ranking=self.ranking, n_points=n, n_nonfinite_points=nonfinite)
             if outputs is not None:
-                out[mm] = _finalize_to_disk(counters[mm], outputs[mm], common, self.chunk_size)
-                continue
-            d = counters[mm].finalize()
-            V = len(d["count"])
-            idx_t = np.uint32 if V < 2 ** 32 else np.uint64
-            out[mm] = OrdinalStatistics(
-                **common, n_windows=int(d["n_windows"]), n_valid=int(d["n_valid"]),
-                n_nonfinite_windows=int(d["n_nonfinite_windows"]), n_tied_windows=int(d["n_tied_windows"]),
-                n_tie_pairs=int(d["n_tie_pairs"]), id_hi=d["id_hi"], id_lo=d["id_lo"],
-                pattern_counts=d["count"], src=d["src"].astype(idx_t), dst=d["dst"].astype(idx_t),
-                weight=d["weight"])
-            if V == 0:
-                warnings.warn(f"no valid windows for m={mm}: all {int(d['n_windows'])} windows contain NaN/Inf; "
+                out[mm] = _finalize_to_disk(counters[mm], outputs[mm], common, cs)
+            else:
+                d = counters[mm].finalize()
+                V = len(d["count"])
+                idx_t = np.uint32 if V < 2 ** 32 else np.uint64
+                out[mm] = OrdinalStatistics(
+                    **common, n_windows=int(d["n_windows"]), n_valid=int(d["n_valid"]),
+                    n_nonfinite_windows=int(d["n_nonfinite_windows"]), n_tied_windows=int(d["n_tied_windows"]),
+                    n_tie_pairs=int(d["n_tie_pairs"]), id_hi=d["id_hi"], id_lo=d["id_lo"],
+                    pattern_counts=d["count"], src=d["src"].astype(idx_t), dst=d["dst"].astype(idx_t),
+                    weight=d["weight"])
+            if out[mm].n_patterns == 0:
+                warnings.warn(f"no valid windows for m={mm}: all {out[mm].n_windows} windows contain NaN/Inf; "
                               f"the result is empty", RuntimeWarning, stacklevel=3)
         if want_ids:
             st = out[ms[0]]

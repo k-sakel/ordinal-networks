@@ -80,7 +80,9 @@ MAPS: dict[str, System] = {s.name: s for s in [
     System("stiletto", "map", 2, (), _r(Chaos=()), "Chaos", (0.1, 0.1)),
     System("zaslavsky", "map", 2, ("Omega", "alpha", "Gamma", "epsilon"), {}, None, (0.1, 0.1),
            note="the MATLAB regime file has no values; pass params explicitly"),
-    System("solenoid", "map", 3, (), _r(Chaos=()), "Chaos", (0.1, 0.1, 0.3), note="state (x, y, theta)"),
+    System("solenoid", "map", 3, (), _r(Chaos=()), "Chaos", (0.1, 0.1, 0.3),
+           note="state (x, y, theta), theta an angle in [0, 2 pi): "
+                "(x, y, theta) -> (x/4 + cos(theta)/2, y/4 + sin(theta)/2, 2 theta mod 2 pi)"),
     System("general_henon", "map", 3, ("a", "b"), _r(HyperChaos=(1.9, 0.03)), "HyperChaos", (0.1, 0.1, 0.1)),
     System("folded_towel", "map", 3, ("a", "b"), _r(HyperChaos=(3.8, 0.2)), "HyperChaos", (0.1, 0.1, 0.1)),
 ]}
@@ -167,6 +169,16 @@ def _x0(s: System, x0, seed):
     return base.tolist()
 
 
+def _step(s: System, dt, every=1) -> tuple[float, int]:
+    """Validated (integration step, sampling interval) of a flow / delay equation."""
+    dt = float(s.dt if dt is None else dt)
+    if not (math.isfinite(dt) and dt > 0):
+        raise ValueError(f"dt must be a positive finite number (got {dt})")
+    if int(every) < 1:
+        raise ValueError(f"every must be >= 1 (got {every})")
+    return dt, int(every)
+
+
 def _check_collapse(out: np.ndarray, name: str, offset: int = 0):
     """Warn if a map trajectory has collapsed onto an exact fixed point
     (a floating-point artefact, e.g. the logistic map hitting x = 0 or 3/4)."""
@@ -204,21 +216,28 @@ def generate(name: str, regime: str | None = None, n: int = 100_000, *, params=N
         out, _ = _core.iterate_map(s.name, p, x, int(n), int(10_000 if transient is None else transient))
         _check_collapse(out, s.name)
     elif s.kind == "flow":
-        out, _ = _core.integrate_flow(s.name, p, x, float(dt or s.dt), int(n), int(every),
+        dt, every = _step(s, dt, every)
+        out, _ = _core.integrate_flow(s.name, p, x, dt, int(n), every,
                                       int(100_000 if transient is None else transient))
     else:
-        out = _core.mackey_glass(p, float(x[0]), float(dt or s.dt), int(n), int(every),
+        dt, every = _step(s, dt, every)
+        out = _core.mackey_glass(p, float(x[0]), dt, int(n), every,
                                  int(100_000 if transient is None else transient))[:, None]
     return out[:, 0] if (squeeze and out.shape[1] == 1) else out
 
 
 def poincare(name: str, regime: str | None = None, n: int = 100_000, *, normal=None, offset: float | None = None,
              direction: float | None = None, params=None, x0=None, dt: float | None = None, transient: int = 100_000,
-             seed: int | None = None, return_times: bool = False):
+             seed: int | None = None, return_times: bool = False, max_steps: int | None = None):
     """n crossings of the Poincare section {normal . x = offset} in the given direction.
 
     Default section: Lorenz z = 27 with dz/dt > 0 (as in Sakellariou et al. 2019);
     see ``FLOWS[name].section`` for the others.
+
+    ``max_steps`` bounds the number of RK4 steps after the transient (default
+    ``10**6 + 10**4 * n``); a ``ValueError`` is raised if fewer than ``n``
+    crossings are found by then (the orbit never reaches the section, or it
+    has diverged), instead of integrating forever.
     """
     s = get_system(name)
     if s.kind != "flow":
@@ -230,9 +249,12 @@ def poincare(name: str, regime: str | None = None, n: int = 100_000, *, normal=N
         offset = off0 if offset is None else offset
         direction = dir0 if direction is None else direction
     p = [float(v) for v in (parameters(s.name, regime) if params is None else params)]
-    pts, t, _ = _core.poincare_section(s.name, p, _x0(s, x0, seed), float(dt or s.dt), int(n),
+    if max_steps is None:
+        max_steps = 1_000_000 + 10_000 * int(n)
+    pts, t, _ = _core.poincare_section(s.name, p, _x0(s, x0, seed), _step(s, dt)[0], int(n),
                                        [float(v) for v in normal], float(offset or 0.0),
-                                       float(1.0 if direction is None else direction), int(transient))
+                                       float(1.0 if direction is None else direction), int(transient),
+                                       int(max_steps))
     return (pts, t) if return_times else pts
 
 
@@ -246,6 +268,8 @@ def generate_to_file(name: str, path, n: int, regime: str | None = None, *, colu
     x = _x0(s, x0, seed)
     if s.kind == "dde":
         raise ValueError("generate_to_file does not support delay equations")
+    if s.kind == "flow":
+        dt, every = _step(s, dt, every)
     shape = (n,) if (column is not None or s.dim == 1) else (n, s.dim)
     mm = np.lib.format.open_memmap(str(path), mode="w+", dtype=np.float64, shape=shape)
     tr = transient if transient is not None else (10_000 if s.kind == "map" else 100_000)
@@ -258,7 +282,7 @@ def generate_to_file(name: str, path, n: int, regime: str | None = None, *, colu
             if not warned:
                 warned = bool(_check_collapse(out, s.name, pos))
         else:
-            out, x = _core.integrate_flow(s.name, p, x, float(dt or s.dt), k, int(every), tr)
+            out, x = _core.integrate_flow(s.name, p, x, dt, k, every, tr)
             # continue from the state after the last stored sample
         tr = 0
         if len(shape) == 1:

@@ -90,7 +90,8 @@ def encode(perms, ranking: str = "chronological") -> np.ndarray:
 
 def convert(ids, m: int, from_ranking: str, to_ranking: str) -> np.ndarray:
     """Re-express pattern IDs in another ranking convention."""
-    if check_ranking(from_ranking) == check_ranking(to_ranking):
+    from_ranking, to_ranking = check_ranking(from_ranking), check_ranking(to_ranking)  # resolve aliases
+    if from_ranking == to_ranking:
         return ids
     p = np.atleast_2d(decode(ids, m, from_ranking)).astype(np.int64)
     # chronological pi <-> ascending ranks r: r[pi[j]-1] = j+1 ; amplitude = m+1-r

@@ -20,6 +20,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as sla
 from scipy.sparse.csgraph import connected_components
+from scipy.special import xlogy
 
 from . import _core
 from . import patterns as _pat
@@ -43,6 +44,12 @@ def _leading_eig(M: sp.spmatrix, which: str = "LR"):
         vals, vecs = sla.eigs(M.astype(np.float64), k=2, which=which, maxiter=50 * n, tol=1e-10)
         k = int(np.argmax(vals.real if which == "LR" else np.abs(vals)))
         return vals[k], vecs[:, k]
+
+
+def _row_entropy(M: sp.csr_matrix) -> np.ndarray:
+    """Shannon entropy (nats) of every row of a CSR matrix of probabilities (0 for empty rows)."""
+    rows = np.repeat(np.arange(M.shape[0]), np.diff(M.indptr))
+    return -np.bincount(rows, weights=xlogy(M.data, M.data), minlength=M.shape[0])
 
 
 @dataclass
@@ -200,11 +207,13 @@ class OrdinalNetwork:
         """Spectral radius of the binary connectivity matrix A (Method IV).
 
         ``log=True`` returns ln(rho(A)), the topological-entropy estimate of
-        Sakellariou, Stemler & Small.
+        Sakellariou, Stemler & Small (-inf for a network without cycles, rho = 0).
         """
         val, _ = _leading_eig(self.A, which="LM")
         rho = float(abs(val))
-        return math.log(rho) if log else rho
+        if not log:
+            return rho
+        return math.log(rho) if rho > 0 else -math.inf
 
     def stationary_distribution(self) -> np.ndarray:
         """Left Perron eigenvector of T normalised to sum 1 (invariant measure of the chain)."""
@@ -297,10 +306,7 @@ class OrdinalNetwork:
 
     def node_link_entropy(self, normalized: bool = False, base: float = 2.0) -> np.ndarray:
         """Shannon entropy of each row of T (MATLAB ``nodeLinkEntropy``)."""
-        T = self.T.tocsr()
-        logp = np.log(T.data) / math.log(base)
-        H = -np.add.reduceat(T.data * logp, T.indptr[:-1]) if T.nnz else np.zeros(self.n_nodes)
-        H[np.diff(T.indptr) == 0] = 0.0
+        H = _row_entropy(self.T.tocsr()) / math.log(base)
         if normalized:
             H = H / (math.log(self.n_nodes) / math.log(base))
         return H
@@ -317,11 +323,7 @@ class OrdinalNetwork:
                 M.eliminate_zeros()
                 s = np.asarray(M.sum(axis=1)).ravel()
                 M = sp.diags(np.divide(1.0, s, out=np.zeros_like(s), where=s > 0)) @ M
-            M = M.tocsr()
-            logp = np.log(M.data)
-            H = -np.add.reduceat(M.data * logp, M.indptr[:-1]) if M.nnz else np.zeros(self.n_nodes)
-            H[np.diff(M.indptr) == 0] = 0.0
-            out[:, j] = np.exp(H)
+            out[:, j] = np.exp(_row_entropy(M.tocsr()))
             Tj = (Tj @ P).tocsr()
         return out
 
@@ -478,6 +480,8 @@ class OrdinalNetwork:
         """Random walk of ``steps`` transitions (node indices). ``weighted=False``
         moves uniformly over out-links (MATLAB ``SimpleRandomWalk``), ``True``
         follows the transition probabilities (``TransitionsRandomWalk``)."""
+        if self.n_nodes == 0:
+            raise ValueError("empty network")
         rng = np.random.default_rng(seed)
         W = self.W.tocsr()
         w = W.data if weighted else np.ones_like(W.data)

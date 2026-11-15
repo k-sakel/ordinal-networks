@@ -166,11 +166,14 @@ def save_network(net, path):
     edges = pa.table({"src": _smallest_uint(net.src), "dst": _smallest_uint(net.dst), "weight": wcol})
     pe = stem.with_name(stem.name + ".edges.parquet")
     _write(edges, pe, meta)
-    if net.id_lo is not None:
+    pn = stem.with_name(stem.name + ".nodes.parquet")
+    if net.id_lo is None:
+        pn.unlink(missing_ok=True)    # a nodes file left by an earlier save would be attached on load
+    else:
         cols = {"id": net.id_lo.astype(np.uint64)} if (net.m or 0) <= 20 else {"id_hi": net.id_hi, "id_lo": net.id_lo}
         if net.node_counts is not None:
             cols["count"] = _smallest_uint(np.asarray(net.node_counts))
-        _write(pa.table(cols), stem.with_name(stem.name + ".nodes.parquet"), meta)
+        _write(pa.table(cols), pn, meta)
     return pe
 
 
