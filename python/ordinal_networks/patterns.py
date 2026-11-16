@@ -21,6 +21,7 @@ RANKINGS = ("chronological", "amplitude")
 
 
 def check_ranking(ranking: str) -> str:
+    """Canonical name (``"chronological"`` or ``"amplitude"``) of a ranking or one of its aliases."""
     r = ranking.lower()
     aliases = {"bp": "chronological", "bandt-pompe": "chronological", "index": "chronological",
                "small": "amplitude", "rank": "amplitude"}
@@ -36,6 +37,7 @@ def factorial(m: int) -> int:
 
 
 def fits_uint64(m: int) -> bool:
+    """True if every pattern ID of length ``m`` fits in 64 bits (m <= 20)."""
     return m <= 20
 
 

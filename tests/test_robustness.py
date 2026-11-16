@@ -206,3 +206,80 @@ def test_small_helpers_edge_cases(x):
     assert on.recurrence.order_recurrence_plot(np.zeros(0, int), sparse=True).shape == (0, 0)
     with pytest.raises(ValueError, match="empty network"):
         on.OrdinalNetwork.from_edges([], []).random_walk(3)
+
+
+def test_conditional_entropy_uses_the_source_marginal():
+    # windows up, down: one transition. p(up) as a pattern frequency is 1/2, as a source it is 1,
+    # so the old pattern-frequency form gave -1 bit here
+    assert on.symbolize([1.0, 2.0, 1.0], 2).conditional_entropy() == 0.0
+    # windows up, up, down: from "up" the next pattern is up or down with probability 1/2 each
+    assert on.symbolize([1.0, 2.0, 3.0, 1.0], 2).conditional_entropy() == pytest.approx(1.0)
+    # gaps: every run loses its last window as a source; the value stays within [0, log2 m]
+    y = np.random.default_rng(1).standard_normal(3000)
+    y[::9] = np.nan
+    st = on.symbolize(y, 3)
+    T = st.network().T.toarray()
+    out = st.network().out_strength()
+    rows = -np.sum(np.where(T > 0, T * np.log2(np.where(T > 0, T, 1.0)), 0.0), axis=1)
+    assert st.conditional_entropy() == pytest.approx(float(np.sum(out / out.sum() * rows)))
+    assert 0.0 <= st.conditional_entropy() <= math.log2(3)
+
+
+def test_outgrowth_ratio_requires_matching_slide(x):
+    a = on.OrdinalSymbolizer(3, w=1).fit(x)
+    b = on.OrdinalSymbolizer(4, w=2).fit(x)
+    with pytest.raises(ValueError, match="share ranking, tau and w"):
+        on.entropy.outgrowth_ratio(a, b)
+
+
+def test_entropy_table_accepts_m1(x):
+    tab = on.entropy.entropy_table(on.OrdinalSymbolizer(1).sweep(x, [1, 2, 3]))
+    assert np.isnan(tab["TPE"][0]) and np.isfinite(tab["TPE"][1:]).all()
+
+
+def test_surrogate_input_validation_and_scale_free_fallback():
+    x = on.systems.generate("logistic", n=5000)
+    st = on.OrdinalSymbolizer(4).fit(x, keep_sequence=True)
+    walk = st.network().random_walk(500, seed=1)
+    with pytest.raises(ValueError, match="method must be"):
+        on.surrogates.reconstruct(walk, st, x, method="nearest")
+    with pytest.raises(ValueError, match="fitted on"):
+        on.surrogates.reconstruct(walk, st, x[:-1])
+    with pytest.raises(ValueError, match="outside the network"):
+        on.surrogates.reconstruct([0, st.n_patterns], st, x)
+    with pytest.raises(ValueError, match="at least m"):
+        on.surrogates.network_surrogate(st, x, 2)
+    # the surrogate of a rescaled series is the rescaled surrogate (fallback steps included)
+    for scale in (1e-9, 1e9):
+        xs = x * scale
+        sts = on.OrdinalSymbolizer(4).fit(xs, keep_sequence=True)
+        s, _ = on.surrogates.reconstruct(walk, sts, xs, seed=3)
+        assert (sts.nodes_of(on.OrdinalSymbolizer(4).encode(s)) == walk).mean() > 0.98
+
+
+def test_small_network_edge_cases():
+    loop = on.OrdinalNetwork.from_edges([0], [0])
+    assert loop.node_link_entropy(normalized=True).tolist() == [0.0]
+    with pytest.raises(ValueError, match="k must be"):
+        loop.n_cycles(0)
+    with pytest.raises(ValueError, match="unknown method"):
+        pytest.importorskip("igraph") and loop.communities("spectral")
+    dag = on.OrdinalNetwork.from_edges([0, 1], [1, 2])               # no cycles: rho(A) = 0
+    assert np.allclose(dag.centrality("katz"), [3.0, 2.0, 1.0])       # 1 + (number of out-paths)
+    with pytest.raises(ValueError, match="malformed CSR"):
+        on._core.random_walk(np.array([0, 2, 1]), np.array([0, 5]), np.array([1.0, 1.0]), 0, 5, 1)
+    with pytest.raises(ValueError, match="L must satisfy"):
+        on.metrics.local_rank_numbers([1.0, 2.0], 5)
+
+
+def test_mackey_glass_long_run_is_cheap_and_reproducible():
+    a = on.systems.generate("mackey_glass", n=4000, every=10, transient=2000)
+    b = on.systems.generate("mackey_glass", n=2000, every=10, transient=2000)
+    assert np.array_equal(a[:2000], b) and np.isfinite(a).all() and a.std() > 0.05
+
+
+def test_eigen_quantities_are_reproducible_for_sparse_solver():
+    x = on.systems.generate("henon", n=300_000)[:, 0]
+    net = on.OrdinalSymbolizer(14).fit(x).network()
+    assert net.n_nodes > 1500                                         # ARPACK path
+    assert net.spectral_radius() == net.spectral_radius.__func__(on.OrdinalSymbolizer(14).fit(x).network())

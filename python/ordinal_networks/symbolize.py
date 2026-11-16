@@ -118,6 +118,7 @@ class OrdinalStatistics:
 
     @property
     def n_patterns(self) -> int:
+        """Number of distinct observed patterns V (nodes of the network)."""
         return len(self.pattern_counts)
 
     @property
@@ -127,6 +128,7 @@ class OrdinalStatistics:
 
     @property
     def pattern_probabilities(self) -> np.ndarray:
+        """Relative frequency of each observed pattern (in the order of ``pattern_ids``)."""
         return self.pattern_counts / self.pattern_counts.sum()
 
     def permutations(self, ranking: str | None = None) -> np.ndarray:
@@ -169,16 +171,49 @@ class OrdinalStatistics:
         return OrdinalNetwork.from_statistics(self)
 
     def permutation_entropy(self, normalized: bool = False, base: float = 2.0) -> float:
+        """Shannon entropy of the pattern distribution (bits by default; see ``entropy.permutation_entropy``)."""
         from .entropy import permutation_entropy
         return permutation_entropy(self, normalized=normalized, base=base)
 
     def conditional_entropy(self, base: float = 2.0) -> float:
+        """Conditional entropy of the next pattern given the current one (bits by default)."""
         from .entropy import conditional_entropy
         return conditional_entropy(self, base=base)
 
     def forbidden_fraction(self) -> float:
         """Relative count of forbidden (unobserved) patterns, 1 - V/m!."""
         return 1.0 - self.n_patterns / _pat.factorial(self.m)
+
+    def missing_transition_fraction(self) -> float:
+        """Fraction of the combinatorially possible transitions that never occur."""
+        from .entropy import missing_transition_fraction
+        return missing_transition_fraction(self)
+
+    def renyi_entropy(self, alpha: float = 2.0, normalized: bool = False, base: float = 2.0) -> float:
+        """Renyi entropy of order ``alpha`` of the pattern distribution (bits by default)."""
+        from .entropy import renyi_entropy
+        return renyi_entropy(self, alpha, normalized=normalized, base=base)
+
+    def tsallis_entropy(self, q: float = 2.0, normalized: bool = False) -> float:
+        """Tsallis entropy of order ``q`` of the pattern distribution."""
+        from .entropy import tsallis_entropy
+        return tsallis_entropy(self, q, normalized=normalized)
+
+    def statistical_complexity(self) -> float:
+        """Jensen-Shannon statistical complexity (see ``entropy.statistical_complexity``)."""
+        from .entropy import statistical_complexity
+        return statistical_complexity(self)
+
+    def complexity_entropy(self) -> tuple[float, float]:
+        """(normalised permutation entropy, statistical complexity): a point in the
+        complexity-entropy causality plane."""
+        from .entropy import complexity_entropy
+        return complexity_entropy(self)
+
+    def global_node_entropy(self, base: float = math.e) -> float:
+        """Global node entropy of the network (nats by default; see ``entropy.global_node_entropy``)."""
+        from .entropy import global_node_entropy
+        return global_node_entropy(self, base=base)
 
     def topological_permutation_entropy(self) -> float:
         """log2(V) / (m - 1), in bits (Bandt, Keller & Pompe 2002)."""
@@ -187,11 +222,13 @@ class OrdinalStatistics:
 
     @property
     def metadata(self) -> dict:
+        """Parameters and counters (m, tau, w, ranking, numbers of points, windows, ties, non-finite values)."""
         return {k: getattr(self, k) for k in (
             "m", "tau", "w", "ranking", "n_points", "n_windows", "n_valid", "n_nonfinite_points",
             "n_nonfinite_windows", "n_tied_windows", "n_tie_pairs")}
 
     def summary(self) -> str:
+        """One-line description of the result."""
         md = self.metadata
         return (f"OrdinalStatistics(m={md['m']}, tau={md['tau']}, w={md['w']}, ranking={md['ranking']!r}: "
                 f"{self.n_patterns} patterns of {_pat.factorial(self.m)}, {self.n_transitions} transitions, "
@@ -232,6 +269,8 @@ class OrdinalSymbolizer:
     spill_dir : directory for temporary spill files (default: the system temp
         directory; ``False`` = never spill, keep everything in RAM)
 
+    Notes
+    -----
     Ties inside a window: the earlier point counts as smaller (Bandt & Pompe).
     Windows containing NaN/Inf are skipped and no transition is recorded into
     or out of them.
@@ -259,9 +298,11 @@ class OrdinalSymbolizer:
 
     @property
     def span(self) -> int:
+        """Number of series points covered by one window, (m - 1) * tau + 1."""
         return (self.m - 1) * self.tau + 1
 
     def n_windows(self, n: int) -> int:
+        """Number of windows in a series of ``n`` points."""
         return 0 if n < self.span else (n - self.span) // self.w + 1
 
     def encode(self, x, column=None) -> np.ndarray:
@@ -506,7 +547,8 @@ def _finalize_to_disk(counter, out_dir: Path, common: dict, chunk: int) -> Ordin
         dst[a:a + chunk] = _ids_to_nodes(np.array(dh[a:a + chunk]), np.array(dl[a:a + chunk]), keys)
     dst.flush()
     _close(dst, *opened)
-    del dst, dh, dl, keys, opened
+    opened.clear()
+    del dst, dh, dl, keys
     import gc
     gc.collect()
     for f in ("nodes_hi", "nodes_lo", "counts", "edge_src", "edge_dst_hi", "edge_dst_lo", "edge_weight"):

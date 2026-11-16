@@ -55,7 +55,7 @@ def main():
               f"peak RSS {rss_gb():.2f} GB{'  (out-of-core)' if out else ''}")
     if a.sweep:
         t = time.perf_counter()
-        sw = on.OrdinalSymbolizer(2).sweep(p, a.m)
+        on.OrdinalSymbolizer(2).sweep(p, a.m)
         print(f"sweep over m={a.m}: {time.perf_counter() - t:.1f}s")
 
 

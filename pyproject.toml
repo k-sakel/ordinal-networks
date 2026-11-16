@@ -1,36 +1,68 @@
 [build-system]
-requires = ["maturin>=1.7,<2"]
+requires = ["maturin>=1.8,<2"]
 build-backend = "maturin"
 
 [project]
 name = "ordinal-networks"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fast ordinal pattern symbolisation, ordinal partition networks and their Markov/ergodic measures"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Konstantinos Sakellariou" }]
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scipy>=1.10", "pyarrow>=14"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
-    "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Scientific/Engineering :: Physics",
+    "Typing :: Typed",
 ]
-keywords = ["ordinal patterns", "permutation entropy", "ordinal partition network", "time series", "chaos", "complex networks"]
+keywords = ["ordinal patterns", "permutation entropy", "ordinal partition network", "time series", "chaos",
+            "complex networks", "topological entropy", "symbolic dynamics"]
 
 [project.optional-dependencies]
 graph = ["python-igraph>=0.11", "networkx>=3"]
-test = ["pytest>=7"]
+test = ["pytest>=7", "pytest-cov>=4", "ordpy>=1.1"]
+docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
+paper = ["matplotlib>=3.7", "ordpy>=1.1", "psutil>=5.9"]
+dev = ["ordinal-networks[graph,test,docs,paper]", "maturin>=1.8,<2", "ruff>=0.6"]
 
 [project.urls]
 Repository = "https://github.com/k-sakel/ordinal-networks"
+Documentation = "https://k-sakel.github.io/ordinal-networks"
+Issues = "https://github.com/k-sakel/ordinal-networks/issues"
+Changelog = "https://github.com/k-sakel/ordinal-networks/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 python-source = "python"
 module-name = "ordinal_networks._core"
-features = ["pyo3/extension-module"]
+# abi3: one wheel per platform serves every CPython >= 3.10
+features = ["pyo3/extension-module", "pyo3/abi3-py310"]
+include = [{ path = "LICENSE", format = "sdist" }, { path = "CITATION.cff", format = "sdist" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["ordinal_networks"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes and the pycodestyle errors that indicate real problems; layout is left to the authors
+select = ["E9", "F", "W6", "B006", "B008"]

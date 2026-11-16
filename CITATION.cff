@@ -1,0 +1,49 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it using the metadata below, together
+  with the methods papers listed under "references".
+title: "ordinal-networks: fast ordinal symbolisation and ordinal partition networks for very long time series"
+type: software
+authors:
+  - family-names: Sakellariou
+    given-names: Konstantinos
+version: 0.2.0
+license: MIT
+repository-code: "https://github.com/k-sakel/ordinal-networks"
+url: "https://k-sakel.github.io/ordinal-networks"
+keywords:
+  - ordinal patterns
+  - permutation entropy
+  - ordinal partition networks
+  - topological entropy
+  - time series analysis
+  - symbolic dynamics
+references:
+  - type: article
+    title: "Markov modeling via ordinal partitions: An alternative paradigm for network-based time-series analysis"
+    authors:
+      - family-names: Sakellariou
+        given-names: Konstantinos
+      - family-names: Stemler
+        given-names: Thomas
+      - family-names: Small
+        given-names: Michael
+    journal: "Physical Review E"
+    volume: 100
+    start: 062307
+    year: 2019
+    doi: 10.1103/PhysRevE.100.062307
+  - type: article
+    title: "Estimating topological entropy using ordinal partition networks"
+    authors:
+      - family-names: Sakellariou
+        given-names: Konstantinos
+      - family-names: Stemler
+        given-names: Thomas
+      - family-names: Small
+        given-names: Michael
+    journal: "Physical Review E"
+    volume: 103
+    start: 022214
+    year: 2021
+    doi: 10.1103/PhysRevE.103.022214

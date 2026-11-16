@@ -8,6 +8,10 @@ use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Process-wide serial number that keeps spill-file names unique across counters.
+static RUN_SERIAL: AtomicU64 = AtomicU64::new(0);
 
 pub trait Key: Copy + Eq + Hash + Ord + Send + Sync {
     const SIZE: usize;
@@ -109,11 +113,10 @@ impl<K: Key> SpillCounter<K> {
         let dir = self.dir.as_ref().unwrap();
         std::fs::create_dir_all(dir)?;
         let path = dir.join(format!(
-            "ordnet_{}_{}_{:p}_{}.run",
+            "ordnet_{}_{}_{}.run",
             self.tag,
             std::process::id(),
-            self as *const _,
-            self.runs.len()
+            RUN_SERIAL.fetch_add(1, Ordering::Relaxed)
         ));
         let mut wtr = BufWriter::with_capacity(1 << 22, File::create(&path)?);
         let mut buf = Vec::with_capacity(K::SIZE + 8);

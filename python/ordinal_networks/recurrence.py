@@ -42,6 +42,8 @@ def recurrence_rate(sequence) -> float:
     """Fraction of recurrent pairs, sum_pi p(pi)^2 (computed without the matrix)."""
     s = np.asarray(sequence)
     s = s[s >= 0] if np.issubdtype(s.dtype, np.signedinteger) else s
+    if len(s) == 0:
+        raise ValueError("empty sequence")
     _, c = np.unique(s, return_counts=True)
     return float(np.sum(c.astype(float) ** 2) / len(s) ** 2)
 

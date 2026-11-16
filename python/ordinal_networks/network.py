@@ -13,7 +13,6 @@ transition counts, self-loops included). Every matrix is derived from it:
 from __future__ import annotations
 
 import math
-import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -37,11 +36,12 @@ def _leading_eig(M: sp.spmatrix, which: str = "LR"):
         vals, vecs = np.linalg.eig(M.toarray())
         k = int(np.argmax(vals.real if which == "LR" else np.abs(vals)))
         return vals[k], vecs[:, k]
+    v0 = np.full(n, 1.0 / n)      # fixed start vector: results are reproducible run to run
     try:
-        vals, vecs = sla.eigs(M.astype(np.float64), k=1, which=which, maxiter=max(10000, 10 * n), tol=1e-12)
+        vals, vecs = sla.eigs(M.astype(np.float64), k=1, which=which, maxiter=max(10000, 10 * n), tol=1e-12, v0=v0)
         return vals[0], vecs[:, 0]
     except sla.ArpackNoConvergence:
-        vals, vecs = sla.eigs(M.astype(np.float64), k=2, which=which, maxiter=50 * n, tol=1e-10)
+        vals, vecs = sla.eigs(M.astype(np.float64), k=2, which=which, maxiter=50 * n, tol=1e-10, v0=v0)
         k = int(np.argmax(vals.real if which == "LR" else np.abs(vals)))
         return vals[k], vecs[:, k]
 
@@ -54,6 +54,12 @@ def _row_entropy(M: sp.csr_matrix) -> np.ndarray:
 
 @dataclass
 class OrdinalNetwork:
+    """Weighted, directed network of ordinal patterns (nodes) and observed transitions
+    (edges, weight = transition count, self-loops included).
+
+    Build one with ``OrdinalStatistics.network()``, or from your own data with
+    :meth:`from_edges` / :meth:`from_matrix`.
+    """
     src: np.ndarray
     dst: np.ndarray
     weight: np.ndarray
@@ -68,6 +74,7 @@ class OrdinalNetwork:
     # -- construction -------------------------------------------------------
     @classmethod
     def from_statistics(cls, st) -> "OrdinalNetwork":
+        """Network of an :class:`OrdinalStatistics` (same as ``st.network()``)."""
         return cls(src=np.asarray(st.src, dtype=np.int64), dst=np.asarray(st.dst, dtype=np.int64),
                    weight=np.asarray(st.weight, dtype=np.float64), n_nodes=st.n_patterns,
                    node_counts=np.asarray(st.pattern_counts), id_hi=st.id_hi, id_lo=st.id_lo,
@@ -75,14 +82,20 @@ class OrdinalNetwork:
 
     @classmethod
     def from_edges(cls, src, dst, weight=None, n_nodes=None) -> "OrdinalNetwork":
+        """Network from an edge list of 0-based node indices (weights default to 1)."""
         src = np.asarray(src, dtype=np.int64)
         dst = np.asarray(dst, dtype=np.int64)
         weight = np.ones(len(src)) if weight is None else np.asarray(weight, dtype=np.float64)
+        if not (len(src) == len(dst) == len(weight)):
+            raise ValueError("src, dst and weight must have the same length")
+        if len(src) and min(src.min(), dst.min()) < 0:
+            raise ValueError("node indices must be non-negative")
         n = int(max(src.max(initial=-1), dst.max(initial=-1)) + 1) if n_nodes is None else int(n_nodes)
         return cls(src=src, dst=dst, weight=weight, n_nodes=n)
 
     @classmethod
     def from_matrix(cls, W) -> "OrdinalNetwork":
+        """Network from a (dense or sparse) weighted adjacency matrix."""
         W = sp.coo_matrix(W)
         return cls.from_edges(W.row, W.col, W.data, W.shape[0])
 
@@ -91,30 +104,36 @@ class OrdinalNetwork:
 
     @property
     def n_edges(self) -> int:
+        """Number of edges (distinct transitions, self-loops included)."""
         return len(self.weight)
 
     @property
     def n_self_loops(self) -> int:
+        """Number of self-loops (a pattern followed by itself)."""
         return int(np.count_nonzero(self.src == self.dst))
 
     @property
     def pattern_ids(self) -> np.ndarray:
+        """Fixed pattern ID of every node (only for networks built from statistics)."""
         if self.id_hi is None:
             raise ValueError("network has no pattern IDs attached")
         return _pat.join(self.id_hi, self.id_lo, self.m)
 
     def permutations(self) -> np.ndarray:
+        """Permutation of every node (n_nodes x m, 1-based, in the ranking of the network)."""
         return _pat.decode(self.pattern_ids, self.m, self.ranking)
 
     # -- matrices -----------------------------------------------------------
     @property
     def W(self) -> sp.csr_matrix:
+        """Weighted adjacency matrix of transition counts, ``W[i, j]`` = #(i -> j)."""
         if "W" not in self._cache:
             self._cache["W"] = sp.csr_matrix((self.weight, (self.src, self.dst)), shape=(self.n_nodes, self.n_nodes))
         return self._cache["W"]
 
     @property
     def A(self) -> sp.csr_matrix:
+        """Binary connectivity matrix, ``A[i, j] = 1`` if the transition i -> j was observed."""
         if "A" not in self._cache:
             A = self.W.copy()
             A.data[:] = 1.0
@@ -144,7 +163,8 @@ class OrdinalNetwork:
         return self.weight / self.weight.sum()
 
     # -- editing ------------------------------------------------------------
-    def subgraph(self, nodes, relabel: bool = True) -> "OrdinalNetwork":
+    def subgraph(self, nodes) -> "OrdinalNetwork":
+        """Network induced on ``nodes`` (relabelled 0..k-1 in ascending order of the old indices)."""
         nodes = np.unique(np.asarray(nodes, dtype=np.int64))
         keep = np.zeros(self.n_nodes, dtype=bool)
         keep[nodes] = True
@@ -180,6 +200,7 @@ class OrdinalNetwork:
         return net
 
     def without_self_loops(self) -> "OrdinalNetwork":
+        """Copy of the network with self-loops removed."""
         keep = self.src != self.dst
         return OrdinalNetwork(src=self.src[keep], dst=self.dst[keep], weight=self.weight[keep], n_nodes=self.n_nodes,
                               node_counts=self.node_counts, id_hi=self.id_hi, id_lo=self.id_lo, m=self.m,
@@ -277,15 +298,19 @@ class OrdinalNetwork:
 
     # -- local topology -------------------------------------------------------
     def in_degree(self) -> np.ndarray:
+        """Number of distinct predecessors of each node (a self-loop counts once)."""
         return np.asarray(self.A.sum(axis=0)).ravel().astype(np.int64)
 
     def out_degree(self) -> np.ndarray:
+        """Number of distinct successors of each node (a self-loop counts once)."""
         return np.asarray(self.A.sum(axis=1)).ravel().astype(np.int64)
 
     def in_strength(self) -> np.ndarray:
+        """Total weight of the edges entering each node."""
         return np.asarray(self.W.sum(axis=0)).ravel()
 
     def out_strength(self) -> np.ndarray:
+        """Total weight of the edges leaving each node."""
         return np.asarray(self.W.sum(axis=1)).ravel()
 
     def avg_neighbor_degree(self, weighted: bool = False) -> np.ndarray:
@@ -308,6 +333,8 @@ class OrdinalNetwork:
         """Shannon entropy of each row of T (MATLAB ``nodeLinkEntropy``)."""
         H = _row_entropy(self.T.tocsr()) / math.log(base)
         if normalized:
+            if self.n_nodes < 2:
+                return np.zeros_like(H)
             H = H / (math.log(self.n_nodes) / math.log(base))
         return H
 
@@ -355,6 +382,8 @@ class OrdinalNetwork:
 
     def cycle_diagonal(self, k: int) -> np.ndarray:
         """diag(A^k): number of closed k-walks through each node."""
+        if k < 1:
+            raise ValueError("k must be >= 1")
         A = self.A.tocsr()
         M = A.copy()
         for _ in range(k - 1):
@@ -367,6 +396,7 @@ class OrdinalNetwork:
 
     # -- global measures via igraph / networkx ------------------------------
     def to_igraph(self):
+        """The network as a directed ``igraph.Graph`` with edge attribute ``weight``."""
         try:
             import igraph as ig
         except ImportError as e:
@@ -376,6 +406,7 @@ class OrdinalNetwork:
         return g
 
     def to_networkx(self):
+        """The network as a ``networkx.DiGraph`` with edge attribute ``weight``."""
         try:
             import networkx as nx
         except ImportError as e:
@@ -417,6 +448,12 @@ class OrdinalNetwork:
           higher = more central, the standard definition, equal to networkx's
           ``harmonic_centrality`` / (n - 1)).
 
+        * ``eigenvector`` and ``katz`` follow *out*-links (right eigenvector of A, and
+          ``(I - alpha A)^-1 1``): a node is central if it leads to central nodes. This is
+          the transpose of the networkx/igraph convention, which follows in-links; use
+          ``OrdinalNetwork.from_matrix(net.W.T).centrality(...)`` for that. ``katz`` takes
+          ``alpha`` (default ``0.9 / rho(A)``; must be below ``1 / rho(A)``).
+
         The path-based measures use dense n x n distance matrices.
         """
         kind = kind.lower()
@@ -439,7 +476,8 @@ class OrdinalNetwork:
         if kind == "katz":
             alpha = kw.get("alpha")
             if alpha is None:
-                alpha = 0.9 / self.spectral_radius()
+                rho = self.spectral_radius()
+                alpha = 0.9 / rho if rho > 0 else 1.0     # no cycles: the series is finite for any alpha
             M = sp.identity(self.n_nodes, format="csc") - alpha * self.A.tocsc()
             return sla.spsolve(M, np.ones(self.n_nodes))
         if kind == "pagerank":
@@ -466,7 +504,7 @@ class OrdinalNetwork:
         elif method == "multilevel":
             cl = g.community_multilevel(weights="weight", **kw)
         else:
-            raise ValueError(method)
+            raise ValueError(f"unknown method {method!r} (use 'leiden', 'leading_eigenvector' or 'multilevel')")
         return np.asarray(cl.membership), float(cl.modularity)
 
     def degree_distribution(self, direction: str = "out") -> tuple[np.ndarray, np.ndarray]:
@@ -493,10 +531,12 @@ class OrdinalNetwork:
 
     # -- I/O ------------------------------------------------------------------
     def save(self, path):
+        """Write ``<path>.edges.parquet`` (and ``<path>.nodes.parquet`` if pattern IDs are attached)."""
         from .io import save_network
         return save_network(self, path)
 
     @classmethod
     def load(cls, path) -> "OrdinalNetwork":
+        """Load a network written by :meth:`save` (or the network of saved statistics)."""
         from .io import load_network
         return load_network(path)

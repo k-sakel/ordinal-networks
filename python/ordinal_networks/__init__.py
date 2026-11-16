@@ -15,7 +15,11 @@ from .network import OrdinalNetwork
 from .patterns import MAX_M, decode, encode, factorial, pattern_of
 from .symbolize import OrdinalStatistics, OrdinalSymbolizer, load_series, symbolize
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _version
+    __version__ = _version("ordinal-networks")
+except Exception:  # pragma: no cover - source tree without an installed distribution
+    __version__ = "0+unknown"
 
 __all__ = [
     "OrdinalSymbolizer", "OrdinalStatistics", "OrdinalNetwork", "symbolize", "load_series",
