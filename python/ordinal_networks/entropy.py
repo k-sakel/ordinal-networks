@@ -239,7 +239,12 @@ def log_mean_outgrowth_ratio(stats_m, stats_m1) -> float:
 
 
 def entropy_table(sweep: Mapping[int, object], spectral: bool = True, lyapunov: bool = False) -> dict:
-    """Convenience: per-m arrays of the main estimators for a sweep (natural log units)."""
+    """Convenience: per-m arrays of the main estimators for a sweep (natural log units).
+
+    A pattern length whose network has no cycles (no pattern recurs: the series is
+    too short for that m) gives ``ln_rho = -inf`` and ``lyap = nan``; the other
+    columns and the other pattern lengths are unaffected.
+    """
     ms = sorted(sweep)
     out = {"m": np.array(ms), "V": np.array([sweep[m].n_patterns for m in ms]),
            "E": np.array([sweep[m].n_transitions for m in ms]),
@@ -249,5 +254,6 @@ def entropy_table(sweep: Mapping[int, object], spectral: bool = True, lyapunov: 
     if spectral:
         out["ln_rho"] = np.array([sweep[m].network().spectral_radius(log=True) for m in ms])
     if lyapunov:
-        out["lyap"] = np.array([sweep[m].network().lyapunov_sum() for m in ms])
+        nets = [sweep[m].network() for m in ms]
+        out["lyap"] = np.array([np.nan if net.is_acyclic() else net.lyapunov_sum() for net in nets])
     return out

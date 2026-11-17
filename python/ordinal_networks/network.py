@@ -225,8 +225,11 @@ class OrdinalNetwork:
         vector. Eigensolvers return eps**(1/k) noise for a nilpotent Jordan block of
         size k (about 0.05 for a 12-node path), which no tolerance separates from a
         real value, so every eigen-quantity checks this first: ``spectral_radius`` is
-        exactly 0, eigenvector centrality is 0 for every node, and
-        ``stationary_distribution`` / ``lyapunov_sum`` / ``metric_entropy_rate`` raise.
+        exactly 0, and ``stationary_distribution``, ``lyapunov_sum``,
+        ``metric_entropy_rate`` and eigenvector centrality raise ``ValueError``.
+
+        This happens when no pattern recurs along the series (a series too short for
+        its m). A monotone series is not acyclic: its single pattern has a self-loop.
         """
         if "acyclic" not in self._cache:
             self._cache["acyclic"] = self.n_nodes == 0 or (
@@ -235,8 +238,8 @@ class OrdinalNetwork:
 
     def _require_cycle(self, what: str) -> None:
         if self.is_acyclic():
-            raise ValueError(f"{what} is undefined for a network without cycles (the chain has no "
-                             f"recurrent state); the series is too short or strictly monotone")
+            raise ValueError(f"{what} is undefined for a network without cycles: no pattern recurs, "
+                             f"so the chain has no recurrent state (the series is too short for this m)")
 
     def largest_scc(self) -> "OrdinalNetwork":
         """Restriction to the largest strongly connected component."""
@@ -474,6 +477,8 @@ class OrdinalNetwork:
           higher = more central, the standard definition, equal to networkx's
           ``harmonic_centrality`` / (n - 1)).
 
+        * ``eigenvector`` sums to 1. It raises ``ValueError`` for a network without cycles,
+          which has no Perron vector (``katz`` is defined there and can be used instead).
         * ``eigenvector`` and ``katz`` follow *out*-links (right eigenvector of A, and
           ``(I - alpha A)^-1 1``): a node is central if it leads to central nodes. This is
           the transpose of the networkx/igraph convention, which follows in-links; use
@@ -496,8 +501,7 @@ class OrdinalNetwork:
             np.fill_diagonal(inv, 0)
             return inv.sum(axis=0) / max(self.n_nodes - 1, 1)
         if kind == "eigenvector":
-            if self.is_acyclic():
-                return np.zeros(self.n_nodes)           # no Perron vector: the standard convention
+            self._require_cycle("eigenvector centrality")
             _, v = _leading_eig(self.A, which="LM")
             v = np.abs(v.real)
             return v / v.sum()

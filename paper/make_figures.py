@@ -22,12 +22,11 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 import ordinal_networks as on  # noqa: E402
+from constants import H_HENON, LN2  # noqa: E402
 
 HERE = Path(__file__).parent
 FIG = HERE / "figures"
 RES = HERE / "results"
-LN2 = math.log(2)
-H_HENON = 0.4651          # topological entropy of the Henon map (a = 1.4, b = 0.3), Newhouse & Pignataro 1993
 
 plt.rcParams.update({"font.size": 9, "axes.spines.top": False, "axes.spines.right": False,
                      "legend.frameon": False, "figure.dpi": 150, "savefig.bbox": "tight"})
@@ -187,7 +186,7 @@ def fig_scale(full, force=False):
         a.plot(ms, h, "o-", ms=2.5, lw=0.8, color=col, label=lab)
         b.semilogy(ms, V, "o-", ms=2.5, lw=0.8, color=col, label=lab)
     a.axhline(H_HENON, color="0.6", lw=0.8)
-    a.text(2, H_HENON - 0.01, "$h_{top}$ = 0.4651", color="0.4", fontsize=7, va="top")
+    a.text(2, H_HENON - 0.01, f"$h_{{top}}$ = {H_HENON}", color="0.4", fontsize=7, va="top")
     a.set_ylim(0.15, 0.9)
     a.set_xlabel("pattern length $m$"); a.set_ylabel(r"$\ln\rho(A)$ (nats)"); a.legend(fontsize=7, ncol=2)
     mm = np.arange(2, mmax + 1)

@@ -361,9 +361,23 @@ def test_walk_checks_visited_rows_even_without_full_validation():
 
 def test_eigen_quantities_of_a_network_without_cycles():
     path = on.OrdinalNetwork.from_edges(np.arange(11), np.arange(1, 12))
-    assert np.array_equal(path.centrality("eigenvector"), np.zeros(12))
-    for f in (path.stationary_distribution, path.lyapunov_sum, path.metric_entropy_rate):
-        with pytest.raises(ValueError, match="without cycles"):
+    for f in (path.stationary_distribution, path.lyapunov_sum, path.metric_entropy_rate,
+              lambda: path.centrality("eigenvector")):
+        with pytest.raises(ValueError, match="without cycles.*too short for this m"):
             f()
+    assert np.isfinite(path.centrality("katz")).all()        # Katz is defined without cycles
+    loop = on.OrdinalNetwork.from_edges([0, 1], [1, 0])
+    assert loop.centrality("eigenvector").sum() == pytest.approx(1.0)
     st = on.OrdinalSymbolizer(3).fit(np.arange(50.0))    # monotone series: one node with a self-loop
     assert st.network().stationary_distribution().tolist() == [1.0]
+
+
+def test_entropy_table_survives_an_acyclic_pattern_length():
+    # 40 points of noise: at m = 8 every window is a new pattern, so that network is a path
+    y = np.random.default_rng(5).standard_normal(40)
+    sw = on.OrdinalSymbolizer(2).sweep(y, [2, 3, 8])
+    assert sw[8].network().is_acyclic() and not sw[2].network().is_acyclic()
+    tab = on.entropy.entropy_table(sw, spectral=True, lyapunov=True)
+    assert np.isfinite(tab["lyap"][:2]).all() and np.isnan(tab["lyap"][2])
+    assert np.isfinite(tab["ln_rho"][:2]).all() and tab["ln_rho"][2] == -math.inf
+    assert np.isfinite(tab["PE"]).all() and np.isfinite(tab["TPE"]).all()

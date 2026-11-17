@@ -8,10 +8,10 @@ import json
 import math
 from pathlib import Path
 
+from constants import H_HENON, LN2
+
 HERE = Path(__file__).parent
 RES = HERE / "results"
-LN2 = math.log(2)
-H_HENON = 0.4651          # reference topological entropy of the Henon map; keep equal to make_figures.H_HENON
 
 
 def load(name):
