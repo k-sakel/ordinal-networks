@@ -219,10 +219,24 @@ class OrdinalNetwork:
         return self.components("strong")[0] == 1
 
     def is_acyclic(self) -> bool:
-        """True if the network has no directed cycle (and no self-loop)."""
-        if self.n_nodes == 0:
-            return True
-        return self.n_self_loops == 0 and self.components("strong")[0] == self.n_nodes
+        """True if the network has no directed cycle (and no self-loop).
+
+        Then A, T and Q are nilpotent: every eigenvalue is 0 and there is no Perron
+        vector. Eigensolvers return eps**(1/k) noise for a nilpotent Jordan block of
+        size k (about 0.05 for a 12-node path), which no tolerance separates from a
+        real value, so every eigen-quantity checks this first: ``spectral_radius`` is
+        exactly 0, eigenvector centrality is 0 for every node, and
+        ``stationary_distribution`` / ``lyapunov_sum`` / ``metric_entropy_rate`` raise.
+        """
+        if "acyclic" not in self._cache:
+            self._cache["acyclic"] = self.n_nodes == 0 or (
+                self.n_self_loops == 0 and self.components("strong")[0] == self.n_nodes)
+        return self._cache["acyclic"]
+
+    def _require_cycle(self, what: str) -> None:
+        if self.is_acyclic():
+            raise ValueError(f"{what} is undefined for a network without cycles (the chain has no "
+                             f"recurrent state); the series is too short or strictly monotone")
 
     def largest_scc(self) -> "OrdinalNetwork":
         """Restriction to the largest strongly connected component."""
@@ -239,19 +253,14 @@ class OrdinalNetwork:
         ``log=True`` returns ln(rho(A)), the topological-entropy estimate of
         Sakellariou, Stemler & Small (-inf for a network without cycles, rho = 0).
         """
-        if self.is_acyclic():
-            # A is nilpotent. Eigensolvers return eps**(1/k) noise for a Jordan block of size k
-            # (about 0.03 for a 10-node path), which no tolerance separates from a real value.
-            rho = 0.0
-        else:
-            val, _ = _leading_eig(self.A, which="LM")
-            rho = float(abs(val))
+        rho = 0.0 if self.is_acyclic() else float(abs(_leading_eig(self.A, which="LM")[0]))
         if not log:
             return rho
         return math.log(rho) if rho > 0 else -math.inf
 
     def stationary_distribution(self) -> np.ndarray:
         """Left Perron eigenvector of T normalised to sum 1 (invariant measure of the chain)."""
+        self._require_cycle("the stationary distribution")
         _, v = _leading_eig(self.T.T.tocsr(), which="LR")
         v = np.abs(v.real)
         return v / v.sum()
@@ -268,6 +277,9 @@ class OrdinalNetwork:
         ``method="T"`` is the commented-out alternative using the row-stochastic T.
         Nodes outside the support of the leading eigenvector are excluded.
         """
+        if method.upper() not in ("Q", "T"):
+            raise ValueError("method must be 'Q' or 'T'")
+        self._require_cycle("the Lyapunov sum")
         if method.upper() == "Q":
             M = self.Q
             _, u = _leading_eig(M, which="LR")
@@ -484,6 +496,8 @@ class OrdinalNetwork:
             np.fill_diagonal(inv, 0)
             return inv.sum(axis=0) / max(self.n_nodes - 1, 1)
         if kind == "eigenvector":
+            if self.is_acyclic():
+                return np.zeros(self.n_nodes)           # no Perron vector: the standard convention
             _, v = _leading_eig(self.A, which="LM")
             v = np.abs(v.real)
             return v / v.sum()
@@ -536,18 +550,22 @@ class OrdinalNetwork:
             raise ValueError("empty network")
         rng = np.random.default_rng(seed)
         key = ("walk", bool(weighted))
-        fresh = key not in self._cache
-        if fresh:
+        validated = key in self._cache
+        if validated:
+            indptr, indices, w = self._cache[key]
+        else:
             W = self.W.tocsr()
             w = W.data if weighted else np.ones_like(W.data)
-            self._cache[key] = (W.indptr.astype(np.int64), W.indices.astype(np.int64),
-                                np.ascontiguousarray(w, dtype=np.float64))
-        indptr, indices, w = self._cache[key]
+            indptr, indices, w = (W.indptr.astype(np.int64), W.indices.astype(np.int64),
+                                  np.ascontiguousarray(w, dtype=np.float64))
         if start is None:
             start = int(rng.integers(self.n_nodes))
         s = int(rng.integers(2 ** 63)) if seed is None else int(seed)
-        # the O(edges) validation of the graph runs on the first walk only
-        return _core.random_walk(indptr, indices, w, int(start), int(steps), s, fresh)
+        # the O(edges) validation of the graph runs until one walk has passed it; the arrays are
+        # cached only then, so a graph that failed validation is validated again on every call
+        walk = _core.random_walk(indptr, indices, w, int(start), int(steps), s, not validated)
+        self._cache[key] = (indptr, indices, w)
+        return walk
 
     # -- I/O ------------------------------------------------------------------
     def save(self, path):

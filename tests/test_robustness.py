@@ -337,3 +337,33 @@ def test_random_walk_validates_the_graph_once_and_stays_reproducible():
     # the cheap consistency checks run even when the full scan is skipped
     with pytest.raises(ValueError, match="malformed CSR"):
         on._core.random_walk(np.array([0, 1, 3]), np.array([1, 0]), np.array([1.0, 1.0]), 0, 5, 1, False)
+
+
+def test_failed_validation_is_not_cached():
+    bad = on.OrdinalNetwork.from_edges([0, 1], [1, 0], [1.0, np.nan])
+    for _ in range(3):                                   # every retry is validated again
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            bad.random_walk(5, start=0, seed=1)
+    assert ("walk", True) not in bad._cache
+    assert len(bad.random_walk(5, start=0, seed=1, weighted=False)) == 6       # unit weights are fine
+
+
+def test_walk_checks_visited_rows_even_without_full_validation():
+    w = np.ones(2)
+    # every walk from node 0 reaches the bad row on its second step
+    cases = [(np.array([0, 1, 0, 2]), np.array([1, 1])),      # decreasing indptr at row 1
+             (np.array([0, 1, 2]), np.array([1, 7])),         # column index out of range
+             (np.array([0, 1, 2]), np.array([1, -1]))]        # negative column index
+    for indptr, indices in cases:
+        with pytest.raises(ValueError, match="malformed CSR"):
+            on._core.random_walk(indptr, indices, w, 0, 10, 1, False)
+
+
+def test_eigen_quantities_of_a_network_without_cycles():
+    path = on.OrdinalNetwork.from_edges(np.arange(11), np.arange(1, 12))
+    assert np.array_equal(path.centrality("eigenvector"), np.zeros(12))
+    for f in (path.stationary_distribution, path.lyapunov_sum, path.metric_entropy_rate):
+        with pytest.raises(ValueError, match="without cycles"):
+            f()
+    st = on.OrdinalSymbolizer(3).fit(np.arange(50.0))    # monotone series: one node with a self-loop
+    assert st.network().stationary_distribution().tolist() == [1.0]

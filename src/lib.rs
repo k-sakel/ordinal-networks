@@ -421,8 +421,9 @@ fn mackey_glass<'py>(py: Python<'py>, params: Vec<f64>, x0: f64, dt: f64, n: usi
 
 /// Random walk on a CSR graph. `validate` (default) scans the whole graph, O(edges);
 /// a caller that draws many walks from one graph can validate on the first call only.
-/// The O(1) consistency checks always run, and an inconsistent graph can never cause
-/// undefined behaviour (slice accesses are bounds-checked).
+/// The O(1) consistency checks and the checks of the rows actually visited always run,
+/// so a malformed graph is a `ValueError` either way; only non-finite or negative
+/// weights can go unnoticed without the full scan.
 #[pyfunction]
 #[pyo3(signature = (indptr, indices, weights, start, steps, seed=0, validate=true))]
 fn random_walk<'py>(py: Python<'py>, indptr: PyReadonlyArray1<'py, i64>, indices: PyReadonlyArray1<'py, i64>, weights: PyReadonlyArray1<'py, f64>,
@@ -448,7 +449,7 @@ fn random_walk<'py>(py: Python<'py>, indptr: PyReadonlyArray1<'py, i64>, indices
             return Err(PyValueError::new_err("edge weights must be finite and non-negative"));
         }
     }
-    let v = py.detach(|| systems::random_walk(ip, ix, wt, start, steps, seed));
+    let v = py.detach(|| systems::random_walk(ip, ix, wt, start, steps, seed)).map_err(PyValueError::new_err)?;
     Ok(v.into_pyarray(py))
 }
 

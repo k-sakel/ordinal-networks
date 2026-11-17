@@ -50,6 +50,9 @@ releases may change the public API; such changes are listed under **Changed**.
 - `spectral_radius` returns exactly 0 for a network without cycles (new
   `OrdinalNetwork.is_acyclic`); eigensolvers return noise for nilpotent matrices, which
   made the default Katz `alpha` blow up.
+- On a network without cycles, eigenvector centrality is 0 for every node and
+  `stationary_distribution`, `lyapunov_sum` and `metric_entropy_rate` raise `ValueError`
+  instead of returning normalised solver noise.
 - `permutation_entropy(normalized=True)` and `renyi_entropy(normalized=True)` return 0
   for m = 1 instead of dividing by zero; `renyi_entropy(alpha=inf)` is the min-entropy
   instead of NaN.

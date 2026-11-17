@@ -11,6 +11,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 RES = HERE / "results"
 LN2 = math.log(2)
+H_HENON = 0.4651          # reference topological entropy of the Henon map; keep equal to make_figures.H_HENON
 
 
 def load(name):
@@ -30,8 +31,8 @@ def sci(v):
     """LaTeX for a small number, e.g. 3 x 10^{-16}."""
     if v == 0:
         return "0"
-    e = math.floor(math.log10(abs(v)))
-    return rf"${v / 10 ** e:.0f}\times10^{{{e}}}$"
+    mant, e = f"{v:.0e}".split("e")          # rounds first, so 9.7e-16 -> 1e-15, not 10e-16
+    return rf"${mant}\times10^{{{int(e)}}}$"
 
 
 def power(n):
@@ -91,10 +92,17 @@ def main():
     k = 0
     while k < len(agree) and agree[k] == run["m"][0] + k:
         k += 1
+    if k == 0:
+        raise SystemExit("scale_henon.json: the two longest series already differ by more than 1 % at the "
+                         "smallest m, so the sentence quoting \\scaleAgreeM no longer holds; revise the text")
     m["scaleAgreeM"] = str(agree[k - 1])              # largest m up to which the two longest series agree within 1 %
     m["scaleRhoPrev"] = f"{prev['ln_rho'][-1]:.4f}"
     short = s["runs"][0]
-    below = [mm for mm, v in zip(short["m"], short["ln_rho"]) if mm > 8 and v < 0.4651]
+    below = [mm for mm, v in zip(short["m"], short["ln_rho"]) if mm > 8 and v < H_HENON]
+    if not below:
+        raise SystemExit(f"scale_henon.json: the shortest series (N = {short['n']}) never falls below the "
+                         f"reference {H_HENON}, so the sentence quoting \\scaleShortCross no longer holds; "
+                         f"revise the text")
     m["scaleShortCross"] = str(below[0])
     m["scaleShortLast"] = f"{short['ln_rho'][-1]:.2f}"
 

@@ -499,13 +499,24 @@ impl Xoshiro256 {
 /// Random walk on a weighted directed graph in CSR form (weights need not be
 /// normalised: the next node is drawn proportionally to the out-weights).
 /// Stops early at a node without out-links (the returned path is shorter).
-pub fn random_walk(indptr: &[i64], indices: &[i64], weights: &[f64], start: usize, steps: usize, seed: u64) -> Vec<i64> {
+/// The rows actually visited are checked, so a malformed graph is an `Err`
+/// (never a panic) even when the caller skipped the full validation.
+pub fn random_walk(indptr: &[i64], indices: &[i64], weights: &[f64], start: usize, steps: usize, seed: u64) -> Result<Vec<i64>, String> {
+    let n = indptr.len().saturating_sub(1);
+    let nnz = indices.len().min(weights.len());
+    if start >= n {
+        return Err("start node out of range".into());
+    }
     let mut rng = Xoshiro256::new(seed);
     let mut path = Vec::with_capacity(steps + 1);
     let mut cur = start;
     path.push(cur as i64);
     for _ in 0..steps {
-        let (a, b) = (indptr[cur] as usize, indptr[cur + 1] as usize);
+        let (a, b) = (indptr[cur], indptr[cur + 1]);
+        if a < 0 || a > b || b as usize > nnz {
+            return Err(format!("malformed CSR graph (row {cur} has bounds {a}..{b})"));
+        }
+        let (a, b) = (a as usize, b as usize);
         if a == b {
             break;
         }
@@ -519,8 +530,11 @@ pub fn random_walk(indptr: &[i64], indices: &[i64], weights: &[f64], start: usiz
                 break;
             }
         }
+        if nxt < 0 || nxt as usize >= n {
+            return Err(format!("malformed CSR graph (row {cur} points to node {nxt})"));
+        }
         cur = nxt as usize;
         path.push(nxt);
     }
-    path
+    Ok(path)
 }
