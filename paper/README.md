@@ -31,6 +31,7 @@ before quoting numbers for a different machine.
 | `manuscript.tex`, `references.bib` | the paper; all bibliography entries were checked against Crossref/OpenAlex |
 | `numbers.tex` | generated macros for measured values |
 | `make_figures.py`, `make_numbers.py` | generation scripts |
+| `paper_constants.py` | reference values used by both scripts |
 | `figures/` | generated figures (PDF and PNG) |
 | `results/` | generated numbers (JSON), including the benchmark record |
 

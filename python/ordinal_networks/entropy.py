@@ -251,9 +251,18 @@ def entropy_table(sweep: Mapping[int, object], spectral: bool = True, lyapunov: 
            "PE": np.array([permutation_entropy(sweep[m], base=math.e) for m in ms]),
            "TPE": np.array([topological_permutation_entropy(sweep[m]) * math.log(2) if m >= 2 else np.nan for m in ms]),
            "lnG": np.array([log_mean_outgrowth_ratio(sweep[m], sweep[m + 1]) if m + 1 in sweep else np.nan for m in ms])}
-    if spectral:
-        out["ln_rho"] = np.array([sweep[m].network().spectral_radius(log=True) for m in ms])
-    if lyapunov:
-        nets = [sweep[m].network() for m in ms]
-        out["lyap"] = np.array([np.nan if net.is_acyclic() else net.lyapunov_sum() for net in nets])
+    if spectral or lyapunov:
+        rho, lyap = [], []
+        for m in ms:
+            # one network per m, used for both columns (its matrices and the acyclicity
+            # check are cached on it) and released before the next m is built
+            net = sweep[m].network()
+            if spectral:
+                rho.append(net.spectral_radius(log=True))
+            if lyapunov:
+                lyap.append(np.nan if net.is_acyclic() else net.lyapunov_sum())
+        if spectral:
+            out["ln_rho"] = np.array(rho)
+        if lyapunov:
+            out["lyap"] = np.array(lyap)
     return out

@@ -11,6 +11,7 @@ The benchmark figure is drawn from ``paper/results/benchmark.json``, written by
 import argparse
 import json
 import math
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -22,7 +23,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 import ordinal_networks as on  # noqa: E402
-from constants import H_HENON, LN2  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).parent))     # paper_constants.py sits next to this script
+
+from paper_constants import H_HENON, LN2  # noqa: E402
 
 HERE = Path(__file__).parent
 FIG = HERE / "figures"

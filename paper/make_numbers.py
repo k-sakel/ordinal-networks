@@ -6,9 +6,12 @@ LaTeX macro, taken from ``paper/results/*.json`` (written by ``make_figures.py``
 """
 import json
 import math
+import sys
 from pathlib import Path
 
-from constants import H_HENON, LN2
+sys.path.insert(0, str(Path(__file__).parent))     # paper_constants.py sits next to this script
+
+from paper_constants import H_HENON, LN2  # noqa: E402
 
 HERE = Path(__file__).parent
 RES = HERE / "results"

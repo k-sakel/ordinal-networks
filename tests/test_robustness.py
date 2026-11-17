@@ -381,3 +381,28 @@ def test_entropy_table_survives_an_acyclic_pattern_length():
     assert np.isfinite(tab["lyap"][:2]).all() and np.isnan(tab["lyap"][2])
     assert np.isfinite(tab["ln_rho"][:2]).all() and tab["ln_rho"][2] == -math.inf
     assert np.isfinite(tab["PE"]).all() and np.isfinite(tab["TPE"]).all()
+
+
+def test_entropy_table_builds_one_network_per_pattern_length(x, monkeypatch):
+    sw = on.OrdinalSymbolizer(2).sweep(x, [3, 4, 5])
+    ref = on.entropy.entropy_table(sw, spectral=True, lyapunov=True)
+    calls = []
+    real = on.OrdinalStatistics.network
+    monkeypatch.setattr(on.OrdinalStatistics, "network", lambda self: calls.append(self.m) or real(self))
+    tab = on.entropy.entropy_table(sw, spectral=True, lyapunov=True)
+    assert calls == [3, 4, 5]
+    assert np.array_equal(tab["ln_rho"], ref["ln_rho"]) and np.array_equal(tab["lyap"], ref["lyap"])
+    assert "ln_rho" not in on.entropy.entropy_table(sw, spectral=False, lyapunov=True)
+    assert "lyap" not in on.entropy.entropy_table(sw, spectral=True, lyapunov=False)
+
+
+def test_paper_scripts_import_from_any_working_directory(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).resolve().parent.parent / "paper" / "make_numbers.py"
+    code = ("import runpy, sys; ns = runpy.run_path(sys.argv[1], run_name='not_main'); "
+            "print(ns['H_HENON'], ns['sci'](9.7e-16))")
+    out = subprocess.run([sys.executable, "-I", "-c", code, str(script)], cwd=tmp_path, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split()[0] == "0.4651" and "10^{-15}" in out.stdout
