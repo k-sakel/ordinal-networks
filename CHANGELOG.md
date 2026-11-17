@@ -47,6 +47,15 @@ releases may change the public API; such changes are listed under **Changed**.
 - Spill-file names are unique per process through a serial number (they used the
   address of the counter, which changes when the counter is moved).
 - `Counter.feed` after `finalize` fails before doing any work.
+- `spectral_radius` returns exactly 0 for a network without cycles (new
+  `OrdinalNetwork.is_acyclic`); eigensolvers return noise for nilpotent matrices, which
+  made the default Katz `alpha` blow up.
+- `permutation_entropy(normalized=True)` and `renyi_entropy(normalized=True)` return 0
+  for m = 1 instead of dividing by zero; `renyi_entropy(alpha=inf)` is the min-entropy
+  instead of NaN.
+- `OrdinalNetwork.from_edges` rejects an `n_nodes` smaller than the edge list requires.
+- `random_walk` converts and validates the graph once per network instead of on every
+  walk.
 - `entropy.outgrowth_ratio` rejects statistics with different `w`;
   `entropy.entropy_table` accepts sweeps that include m = 1;
   `OrdinalNetwork.n_cycles(k)` rejects k < 1; `node_link_entropy(normalized=True)` on a

@@ -98,7 +98,10 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: dist
-      - run: pip install --find-links dist --only-binary ordinal-networks ordinal-networks
+      # install the file itself: with --find-links pip could still pick a published wheel from PyPI
+      - name: Install the wheel built in this run
+        shell: bash
+        run: pip install dist/*.whl
       - name: Quick start returns ln 2
         run: >
           python -c "import ordinal_networks as on, math;

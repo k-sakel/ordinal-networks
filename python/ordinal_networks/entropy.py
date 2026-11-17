@@ -37,8 +37,26 @@ def permutation_entropy(stats, normalized: bool = False, base: float = 2.0) -> f
     p = stats.pattern_counts / stats.pattern_counts.sum()
     H = float(-np.sum(p * np.log(p)) / math.log(base))
     if normalized:
-        H /= math.log(_pat.factorial(stats.m)) / math.log(base)
+        H = _normalise(H, stats.m, base)
     return H
+
+
+def _normalise(H: float, m: int, base: float) -> float:
+    """H / log(m!); 0 for m = 1, where there is a single pattern and log(m!) = 0."""
+    n = _pat.factorial(m)
+    return H / (math.log(n) / math.log(base)) if n > 1 else 0.0
+
+
+def _transitions(stats):
+    """Transition statistics shared by the transition-based entropies: weights w,
+    source and target node of every edge, the out-strength of every node (the
+    source marginal, which unlike the pattern counts excludes the last window of
+    every run) and the transition probability t = w / out[src] of every edge."""
+    w = np.asarray(stats.weight, dtype=np.float64)
+    src = np.asarray(stats.src, dtype=np.int64)
+    dst = np.asarray(stats.dst, dtype=np.int64)
+    out = np.bincount(src, weights=w, minlength=stats.n_patterns)
+    return w, src, dst, out, w / out[src]
 
 
 def conditional_entropy(stats, base: float = 2.0) -> float:
@@ -54,28 +72,33 @@ def conditional_entropy(stats, base: float = 2.0) -> float:
     _require_windows(stats)
     if stats.n_transitions == 0:
         return 0.0
-    w = np.asarray(stats.weight, dtype=np.float64)
-    src = np.asarray(stats.src, dtype=np.int64)
-    out = np.bincount(src, weights=w, minlength=stats.n_patterns)
-    h = -np.sum(w * np.log(w / out[src])) / w.sum()
+    w, _, _, _, t = _transitions(stats)
+    h = -np.sum(w * np.log(t)) / w.sum()
     return float(h / math.log(base)) if h > 0 else 0.0
 
 
 def renyi_entropy(stats, alpha: float = 2.0, normalized: bool = False, base: float = 2.0) -> float:
     """Renyi entropy of order ``alpha`` of the pattern distribution,
-    ``log(sum_i p_i^alpha) / (1 - alpha)``; ``alpha = 1`` is the permutation entropy.
+    ``log(sum_i p_i^alpha) / (1 - alpha)``; ``alpha = 1`` is the permutation entropy
+    and ``alpha = inf`` the min-entropy ``-log(max_i p_i)``.
 
     ``normalized=True`` divides by log(m!).
     """
     _require_windows(stats)
-    if alpha < 0:
+    if not alpha >= 0:
         raise ValueError("alpha must be >= 0")
     if alpha == 1:
         return permutation_entropy(stats, normalized=normalized, base=base)
     p = stats.pattern_counts / stats.pattern_counts.sum()
-    H = float(np.log(np.sum(p ** alpha)) / (1.0 - alpha) / math.log(base))
+    if math.isinf(alpha):
+        H = float(-np.log(p.max()) / math.log(base))
+    else:
+        # log sum_i p_i^alpha with the largest term factored out: p^alpha underflows for large alpha
+        pmax = p.max()
+        log_sum = alpha * math.log(pmax) + math.log(np.sum((p / pmax) ** alpha))
+        H = float(log_sum / (1.0 - alpha) / math.log(base))
     if normalized:
-        H /= math.log(_pat.factorial(stats.m)) / math.log(base)
+        H = _normalise(H, stats.m, base)
     return H
 
 
@@ -142,13 +165,9 @@ def global_node_entropy(stats, base: float = math.e) -> float:
     _require_windows(stats)
     if stats.n_transitions == 0:
         return 0.0
-    w = np.asarray(stats.weight, dtype=np.float64)
-    src = np.asarray(stats.src, dtype=np.int64)
-    dst = np.asarray(stats.dst, dtype=np.int64)
+    w, src, dst, _, t = _transitions(stats)
     V = stats.n_patterns
-    out = np.bincount(src, weights=w, minlength=V)
     p_in = np.bincount(dst, weights=w, minlength=V) / w.sum()
-    t = w / out[src]
     h_i = -np.bincount(src, weights=t * np.log(t), minlength=V)
     return float(np.sum(p_in * h_i) / math.log(base))
 

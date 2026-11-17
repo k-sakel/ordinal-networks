@@ -90,7 +90,10 @@ class OrdinalNetwork:
             raise ValueError("src, dst and weight must have the same length")
         if len(src) and min(src.min(), dst.min()) < 0:
             raise ValueError("node indices must be non-negative")
-        n = int(max(src.max(initial=-1), dst.max(initial=-1)) + 1) if n_nodes is None else int(n_nodes)
+        need = int(max(src.max(initial=-1), dst.max(initial=-1)) + 1)
+        n = need if n_nodes is None else int(n_nodes)
+        if n < need:
+            raise ValueError(f"n_nodes = {n} but the edge list refers to node {need - 1}")
         return cls(src=src, dst=dst, weight=weight, n_nodes=n)
 
     @classmethod
@@ -215,6 +218,12 @@ class OrdinalNetwork:
         """True if the network is strongly connected (an irreducible Markov chain)."""
         return self.components("strong")[0] == 1
 
+    def is_acyclic(self) -> bool:
+        """True if the network has no directed cycle (and no self-loop)."""
+        if self.n_nodes == 0:
+            return True
+        return self.n_self_loops == 0 and self.components("strong")[0] == self.n_nodes
+
     def largest_scc(self) -> "OrdinalNetwork":
         """Restriction to the largest strongly connected component."""
         n, lab = self.components("strong")
@@ -230,8 +239,13 @@ class OrdinalNetwork:
         ``log=True`` returns ln(rho(A)), the topological-entropy estimate of
         Sakellariou, Stemler & Small (-inf for a network without cycles, rho = 0).
         """
-        val, _ = _leading_eig(self.A, which="LM")
-        rho = float(abs(val))
+        if self.is_acyclic():
+            # A is nilpotent. Eigensolvers return eps**(1/k) noise for a Jordan block of size k
+            # (about 0.03 for a 10-node path), which no tolerance separates from a real value.
+            rho = 0.0
+        else:
+            val, _ = _leading_eig(self.A, which="LM")
+            rho = float(abs(val))
         if not log:
             return rho
         return math.log(rho) if rho > 0 else -math.inf
@@ -521,13 +535,19 @@ class OrdinalNetwork:
         if self.n_nodes == 0:
             raise ValueError("empty network")
         rng = np.random.default_rng(seed)
-        W = self.W.tocsr()
-        w = W.data if weighted else np.ones_like(W.data)
+        key = ("walk", bool(weighted))
+        fresh = key not in self._cache
+        if fresh:
+            W = self.W.tocsr()
+            w = W.data if weighted else np.ones_like(W.data)
+            self._cache[key] = (W.indptr.astype(np.int64), W.indices.astype(np.int64),
+                                np.ascontiguousarray(w, dtype=np.float64))
+        indptr, indices, w = self._cache[key]
         if start is None:
             start = int(rng.integers(self.n_nodes))
         s = int(rng.integers(2 ** 63)) if seed is None else int(seed)
-        return _core.random_walk(W.indptr.astype(np.int64), W.indices.astype(np.int64),
-                                 np.ascontiguousarray(w, dtype=np.float64), int(start), int(steps), s)
+        # the O(edges) validation of the graph runs on the first walk only
+        return _core.random_walk(indptr, indices, w, int(start), int(steps), s, fresh)
 
     # -- I/O ------------------------------------------------------------------
     def save(self, path):

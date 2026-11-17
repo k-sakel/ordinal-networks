@@ -283,3 +283,57 @@ def test_eigen_quantities_are_reproducible_for_sparse_solver():
     net = on.OrdinalSymbolizer(14).fit(x).network()
     assert net.n_nodes > 1500                                         # ARPACK path
     assert net.spectral_radius() == net.spectral_radius.__func__(on.OrdinalSymbolizer(14).fit(x).network())
+
+
+# ------------------------------------------------------------- PR #2 review comments --
+
+def test_spectral_radius_is_exactly_zero_without_cycles():
+    # a path of 12 nodes: A is one nilpotent Jordan block, for which dense eigensolvers
+    # return |lambda| ~ eps**(1/12) ~ 0.05 instead of 0
+    k = 12
+    path = on.OrdinalNetwork.from_edges(np.arange(k - 1), np.arange(1, k))
+    assert path.is_acyclic() and path.spectral_radius() == 0.0
+    assert path.spectral_radius(log=True) == -math.inf
+    # default Katz alpha: the finite series 1 + (number of nodes reachable along the path)
+    assert np.allclose(path.centrality("katz"), np.arange(k, 0, -1))
+    assert not on.OrdinalNetwork.from_edges([0, 1], [1, 0]).is_acyclic()
+    assert not on.OrdinalNetwork.from_edges([0, 0], [0, 1]).is_acyclic()        # self-loop
+
+
+def test_entropies_for_m1_and_min_entropy(x):
+    st1 = on.OrdinalSymbolizer(1).fit(x)
+    assert st1.permutation_entropy(normalized=True) == 0.0
+    for a in (0.5, 1.0, 2.0, math.inf):
+        assert st1.renyi_entropy(a, normalized=True) == 0.0
+    assert st1.tsallis_entropy(2.0, normalized=True) == 0.0
+    st = on.OrdinalSymbolizer(3).fit(x)
+    p = st.pattern_probabilities
+    assert st.renyi_entropy(math.inf) == pytest.approx(-math.log2(p.max()))
+    # Renyi entropy is non-increasing in alpha and tends to the min-entropy
+    hs = [st.renyi_entropy(a) for a in (0.5, 1.0, 2.0, 50.0, math.inf)]
+    assert all(u >= v - 1e-12 for u, v in zip(hs, hs[1:]))
+    assert st.renyi_entropy(1e4) == pytest.approx(st.renyi_entropy(math.inf), abs=1e-3)
+    for bad in (-1.0, math.nan):
+        with pytest.raises(ValueError, match="alpha must be"):
+            st.renyi_entropy(bad)
+
+
+def test_from_edges_rejects_n_nodes_smaller_than_the_edge_list():
+    with pytest.raises(ValueError, match="refers to node 5"):
+        on.OrdinalNetwork.from_edges([0, 5], [1, 2], n_nodes=3)
+    assert on.OrdinalNetwork.from_edges([0, 5], [1, 2], n_nodes=9).n_nodes == 9
+
+
+def test_random_walk_validates_the_graph_once_and_stays_reproducible():
+    net = on.OrdinalSymbolizer(4).fit(np.random.default_rng(2).standard_normal(3000)).network()
+    a = net.random_walk(500, start=0, seed=7)
+    assert ("walk", True) in net._cache
+    assert np.array_equal(net.random_walk(500, start=0, seed=7), a)             # cached arrays, same walk
+    assert np.array_equal(net.random_walk(500, start=0, seed=7, weighted=False),
+                          on.OrdinalNetwork.from_matrix(net.A).random_walk(500, start=0, seed=7))
+    bad = on.OrdinalNetwork.from_edges([0, 1], [1, 0], [1.0, np.nan])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        bad.random_walk(5, start=0, seed=1)
+    # the cheap consistency checks run even when the full scan is skipped
+    with pytest.raises(ValueError, match="malformed CSR"):
+        on._core.random_walk(np.array([0, 1, 3]), np.array([1, 0]), np.array([1.0, 1.0]), 0, 5, 1, False)
