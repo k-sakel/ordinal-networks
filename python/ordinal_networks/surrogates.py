@@ -25,11 +25,22 @@ def reconstruct(walk, stats, x, method: str = "random", seed: int | None = None)
         raise ValueError("reconstruction requires tau = 1 and w = 1")
     if stats.sequence is None:
         raise ValueError("fit with keep_sequence=True")
+    if method not in ("random", "constrained"):
+        raise ValueError("method must be 'random' or 'constrained'")
     rng = np.random.default_rng(seed)
     m = stats.m
     x = np.asarray(x, dtype=float)
+    if len(x) != stats.n_points:
+        raise ValueError(f"x has {len(x)} points but the statistics were fitted on {stats.n_points}")
     seq = np.asarray(stats.sequence)
     walk = np.asarray(walk, dtype=np.int64)
+    if walk.size == 0:
+        raise ValueError("empty walk")
+    if walk.min() < 0 or walk.max() >= stats.n_patterns:
+        raise ValueError("walk contains node indices outside the network")
+    finite = x[np.isfinite(x)]
+    # step used when the new point must be a new extreme and no observed value fits
+    step = 1e-3 * (float(np.ptp(finite)) if finite.size else 1.0) or 1e-3
     # candidate last values for every node, sorted
     ok = seq >= 0
     idx = np.flatnonzero(ok)
@@ -61,17 +72,15 @@ def reconstruct(walk, stats, x, method: str = "random", seed: int | None = None)
         if b > a:
             if method == "random":
                 v = c[a + rng.integers(b - a)]
-            elif method == "constrained":
+            else:
                 seg = c[a:b]
                 v = seg[np.argmin(np.abs(seg - out[i + m - 2]))]
-            else:
-                raise ValueError("method must be 'random' or 'constrained'")
         else:
             fallback += 1
             if rl == m:
-                v = prev.max() + 1e-3
+                v = prev.max() + step
             elif rl == 1:
-                v = prev.min() - 1e-3
+                v = prev.min() - step
             else:
                 v = 0.5 * (lo + hi)
                 if not (lo <= v < hi):
@@ -83,7 +92,14 @@ def reconstruct(walk, stats, x, method: str = "random", seed: int | None = None)
 
 def network_surrogate(stats, x, length: int, method: str = "random", weighted: bool = True,
                       seed: int | None = None) -> tuple[np.ndarray, int]:
-    """Random walk on ``stats.network()`` followed by :func:`reconstruct`."""
+    """Random walk on ``stats.network()`` followed by :func:`reconstruct`.
+
+    The series has ``length`` points unless the walk reaches a node without
+    out-links (the last window of the original series, if its pattern occurs
+    only there), in which case it is shorter.
+    """
+    if length < stats.m:
+        raise ValueError(f"length must be at least m = {stats.m}")
     rng = np.random.default_rng(seed)
     net = stats.network()
     walk = net.random_walk(length - stats.m, weighted=weighted, seed=int(rng.integers(2 ** 62)))

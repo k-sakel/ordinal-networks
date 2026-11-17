@@ -83,6 +83,9 @@ impl Counter {
         -> PyResult<Option<(Bound<'py, PyArray1<u64>>, Bound<'py, PyArray1<u64>>)>> {
         let x = segment.as_slice()?;
         let p = self.params;
+        if self.patterns.is_none() {
+            return Err(PyValueError::new_err("counter already finalized"));
+        }
         if n_windows == 0 {
             return Ok(None);
         }
@@ -416,15 +419,37 @@ fn mackey_glass<'py>(py: Python<'py>, params: Vec<f64>, x0: f64, dt: f64, n: usi
     Ok(v.into_pyarray(py))
 }
 
+/// Random walk on a CSR graph. `validate` (default) scans the whole graph, O(edges);
+/// a caller that draws many walks from one graph can validate on the first call only.
+/// The O(1) consistency checks and the checks of the rows actually visited always run,
+/// so a malformed graph is a `ValueError` either way; only non-finite or negative
+/// weights can go unnoticed without the full scan.
 #[pyfunction]
-#[pyo3(signature = (indptr, indices, weights, start, steps, seed=0))]
+#[pyo3(signature = (indptr, indices, weights, start, steps, seed=0, validate=true))]
 fn random_walk<'py>(py: Python<'py>, indptr: PyReadonlyArray1<'py, i64>, indices: PyReadonlyArray1<'py, i64>, weights: PyReadonlyArray1<'py, f64>,
-    start: usize, steps: usize, seed: u64) -> PyResult<Bound<'py, PyArray1<i64>>> {
+    start: usize, steps: usize, seed: u64, validate: bool) -> PyResult<Bound<'py, PyArray1<i64>>> {
     let (ip, ix, wt) = (indptr.as_slice()?, indices.as_slice()?, weights.as_slice()?);
-    if start + 1 >= ip.len() {
+    if ip.is_empty() || start + 1 >= ip.len() {
         return Err(PyValueError::new_err("start node out of range"));
     }
-    let v = py.detach(|| systems::random_walk(ip, ix, wt, start, steps, seed));
+    let n = (ip.len() - 1) as i64;
+    let nnz = ix.len() as i64;
+    if wt.len() != ix.len() || ip[0] != 0 || ip[ip.len() - 1] != nnz {
+        return Err(PyValueError::new_err("malformed CSR graph (indptr/indices/weights are inconsistent)"));
+    }
+    if validate {
+        // so that a malformed graph is an error and not a panic
+        if ip.windows(2).any(|w| w[0] > w[1]) {
+            return Err(PyValueError::new_err("malformed CSR graph (indptr/indices/weights are inconsistent)"));
+        }
+        if ix.iter().any(|&j| j < 0 || j >= n) {
+            return Err(PyValueError::new_err("malformed CSR graph (column index out of range)"));
+        }
+        if wt.iter().any(|w| !(w.is_finite() && *w >= 0.0)) {
+            return Err(PyValueError::new_err("edge weights must be finite and non-negative"));
+        }
+    }
+    let v = py.detach(|| systems::random_walk(ip, ix, wt, start, steps, seed)).map_err(PyValueError::new_err)?;
     Ok(v.into_pyarray(py))
 }
 

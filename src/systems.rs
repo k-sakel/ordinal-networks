@@ -434,22 +434,29 @@ pub fn poincare(
 pub fn mackey_glass(p: &[f64], x0: f64, dt: f64, n_out: usize, every: usize, transient: usize) -> Vec<f64> {
     let (be, ga, nn, tau, al) = (p[0], p[1], p[2], p[3], p[4]);
     let lag = (tau / dt).round().max(1.0) as usize;
-    let total = transient + n_out * every.max(1);
-    let mut hist = vec![x0; lag + total + 1];
+    let every = every.max(1);
+    // ring buffer of the last lag + 1 values: ring[i % (lag + 1)] holds step i - lag
+    // (step <= 0 is the constant initial history), so memory does not grow with n_out
+    let len = lag + 1;
+    let mut ring = vec![x0; len];
     let f = |x: f64, xt: f64| be * xt / (1.0 + al * xt.powf(nn)) - ga * x;
+    let mut out = Vec::with_capacity(n_out);
+    let total = transient + n_out * every;
     for k in 0..total {
-        let i = lag + k; // current index
-        let x = hist[i];
-        let xt0 = hist[i - lag];
-        let xt1 = hist[i - lag + 1];
+        let x = ring[(k + lag) % len];        // x(k)
+        if k >= transient && (k - transient) % every == 0 {
+            out.push(x);
+        }
+        let xt0 = ring[k % len];              // x(k - lag)
+        let xt1 = ring[(k + 1) % len];        // x(k - lag + 1)
         let xth = 0.5 * (xt0 + xt1);
         let k1 = f(x, xt0);
         let k2 = f(x + 0.5 * dt * k1, xth);
         let k3 = f(x + 0.5 * dt * k2, xth);
         let k4 = f(x + dt * k3, xt1);
-        hist[i + 1] = x + dt / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+        ring[k % len] = x + dt / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4);   // x(k + 1) replaces x(k - lag)
     }
-    (0..n_out).map(|j| hist[lag + transient + j * every.max(1)]).collect()
+    out
 }
 
 // ---------------------------------------------------------- random walk ---
@@ -492,13 +499,24 @@ impl Xoshiro256 {
 /// Random walk on a weighted directed graph in CSR form (weights need not be
 /// normalised: the next node is drawn proportionally to the out-weights).
 /// Stops early at a node without out-links (the returned path is shorter).
-pub fn random_walk(indptr: &[i64], indices: &[i64], weights: &[f64], start: usize, steps: usize, seed: u64) -> Vec<i64> {
+/// The rows actually visited are checked, so a malformed graph is an `Err`
+/// (never a panic) even when the caller skipped the full validation.
+pub fn random_walk(indptr: &[i64], indices: &[i64], weights: &[f64], start: usize, steps: usize, seed: u64) -> Result<Vec<i64>, String> {
+    let n = indptr.len().saturating_sub(1);
+    let nnz = indices.len().min(weights.len());
+    if start >= n {
+        return Err("start node out of range".into());
+    }
     let mut rng = Xoshiro256::new(seed);
     let mut path = Vec::with_capacity(steps + 1);
     let mut cur = start;
     path.push(cur as i64);
     for _ in 0..steps {
-        let (a, b) = (indptr[cur] as usize, indptr[cur + 1] as usize);
+        let (a, b) = (indptr[cur], indptr[cur + 1]);
+        if a < 0 || a > b || b as usize > nnz {
+            return Err(format!("malformed CSR graph (row {cur} has bounds {a}..{b})"));
+        }
+        let (a, b) = (a as usize, b as usize);
         if a == b {
             break;
         }
@@ -512,8 +530,11 @@ pub fn random_walk(indptr: &[i64], indices: &[i64], weights: &[f64], start: usiz
                 break;
             }
         }
+        if nxt < 0 || nxt as usize >= n {
+            return Err(format!("malformed CSR graph (row {cur} points to node {nxt})"));
+        }
         cur = nxt as usize;
         path.push(nxt);
     }
-    path
+    Ok(path)
 }

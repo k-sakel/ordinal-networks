@@ -10,7 +10,7 @@ It ports and extends the MATLAB toolbox behind
   An alternative paradigm for network-based time-series analysis*, Phys. Rev. E
   **100**, 062307 (2019)
 * K. Sakellariou, T. Stemler, M. Small, *Estimating topological entropy using
-  ordinal partition networks* (2021)
+  ordinal partition networks*, Phys. Rev. E **103**, 022214 (2021)
 
 and handles series of length **N ~ 10⁹** and pattern lengths up to **m = 34** on a
 laptop.
@@ -24,31 +24,35 @@ stats.n_patterns, stats.n_transitions                      # 10525 patterns, 210
 
 net = stats.network()
 net.spectral_radius(log=True)    # 0.692  topological entropy estimate (ln 2 = 0.693)
-net.lyapunov_sum()               # 0.697  ordinal Lyapunov estimate (LyapunovSum_OrdNet)
+net.lyapunov_sum()               # 0.687  ordinal Lyapunov estimate (LyapunovSum_OrdNet)
 ```
+
+Documentation: <https://k-sakel.github.io/ordinal-networks> (sources in `docs/`).
+Changes between versions: [CHANGELOG.md](CHANGELOG.md).
 
 ## Installation
 
-**Windows / macOS / Linux, prebuilt wheel (no Rust needed).** Every push to `main`
-builds wheels for Python 3.10–3.13 in GitHub Actions (*Actions → latest run →
-Artifacts → `wheels-windows-latest`*). Releases (*Releases → v0.1.0 → Assets*)
-carry the same wheels: a release is created when a version tag is pushed, or
-when a commit on `main` has `[release]` in its message (tagged from the
-version in `pyproject.toml`). Install the wheel that matches your Python:
+**Prebuilt wheel (no Rust needed).** Wheels use the stable ABI, so one wheel per
+platform (Windows, macOS, Linux; x86-64 and arm64) serves every CPython >= 3.10.
 
 ```
-pip install ordinal_networks-0.1.0-cp312-cp312-win_amd64.whl
+pip install ordinal-networks
 ```
+
+PyPI publishing starts with the first tagged release after v0.1.0. Until then,
+download the wheel for your platform from *Releases -> Assets* (or from the
+artifacts of the latest CI run) and `pip install` the file.
 
 **From source** (needs a Rust toolchain from <https://rustup.rs>, plus on Windows
-the "Desktop development with C++" workload of Visual Studio Build Tools):
+either the "Desktop development with C++" workload of Visual Studio Build Tools or
+the `x86_64-pc-windows-gnu` toolchain):
 
 ```
 git clone https://github.com/k-sakel/ordinal-networks
 cd ordinal-networks
 pip install maturin
 pip install -e ".[test,graph]"     # builds the Rust core in release mode
-pytest                             # 113 tests
+pytest                             # about 200 tests, incl. cross-checks against ordpy
 ```
 
 Dependencies: `numpy`, `scipy`, `pyarrow`; optional `python-igraph`/`networkx`
@@ -184,8 +188,12 @@ net.largest_scc(); net.is_irreducible(); net.components("strong")
 
 ```python
 stats.permutation_entropy(normalized=True)
+stats.renyi_entropy(alpha=2); stats.tsallis_entropy(q=2)
+stats.complexity_entropy()                     # (H, C): complexity-entropy plane
 stats.conditional_entropy()                    # ConditionalEntropy
+stats.global_node_entropy()                    # as defined in ordpy
 stats.forbidden_fraction()                     # CountForbiddenPatterns
+stats.missing_transition_fraction()            # transitions that never occur
 stats.topological_permutation_entropy()        # Method II
 on.entropy.growth_rate(sweep, range(4, 15))    # Method I
 on.entropy.outgrowth_ratio(sweep[m], sweep[m+1]); on.entropy.log_mean_outgrowth_ratio(...)   # Method III
@@ -193,9 +201,9 @@ on.entropy.entropy_table(sweep, lyapunov=True) # all estimators for every m
 ```
 
 **Units.** Shannon-type entropies of the statistics and of node rows (`permutation_entropy`,
-`conditional_entropy`, `node_link_entropy`) and `topological_permutation_entropy` are in **bits**
-by default (`base=2`). The spectral and ergodic quantities (`spectral_radius(log=True)`,
-`lyapunov_sum`, `metric_entropy_rate`, `entropy_table`) are in **nats**; multiply bits by ln 2 to
+`renyi_entropy`, `conditional_entropy`, `node_link_entropy`) and `topological_permutation_entropy`
+are in **bits** by default (`base=2`). The spectral and ergodic quantities (`spectral_radius(log=True)`,
+`lyapunov_sum`, `metric_entropy_rate`, `global_node_entropy`, `entropy_table`) are in **nats**; multiply bits by ln 2 to
 compare. Series shorter than one window `(m - 1) * tau + 1` raise `ValueError`; a series whose
 windows all contain NaN/Inf gives an empty result with a `RuntimeWarning`.
 
@@ -250,6 +258,24 @@ on.systems.lyapunov_spectrum("henon", xy)        # reference values via Jacobian
 * When no observed value fits, surrogate reconstruction uses the midpoint of the
   admissible interval, so the requested pattern is preserved.
 
+## Relation to ordpy
+
+Where the two packages overlap (pattern distributions, permutation, Renyi and Tsallis
+entropies, statistical complexity, network edge weights, global node entropy, missing
+patterns and links) they give identical numbers; `tests/test_crosscheck.py` asserts
+this. ordpy also covers two-dimensional data and amplitude-aware variants, which
+this library does not. See `docs/from-ordpy.md` for a function-by-function map.
+
+## Paper and reproducibility
+
+`paper/` holds the manuscript and the scripts that regenerate every figure and
+table in it (`python paper/make_figures.py`); `benchmarks/compare.py` reproduces
+the comparison with ordpy.
+
+## Citing
+
+See [CITATION.cff](CITATION.cff), and please cite the two methods papers above.
+
 ## Licence
 
-MIT.
+MIT. See [LICENSE](LICENSE).

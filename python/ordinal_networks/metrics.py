@@ -21,7 +21,7 @@ def hamming(s1, s2) -> float:
     (Fixes the MATLAB ``HammingMetric`` typo ``simg2``.)
     """
     a, b = _pair(s1, s2)
-    return float(np.count_nonzero(a != b) / a.size)
+    return float(np.count_nonzero(a != b) / a.size) if a.size else 0.0
 
 
 def kendall_tau_distance(s1, s2) -> float:
@@ -77,6 +77,8 @@ def local_rank_numbers(x, L: int) -> np.ndarray:
     """#{j = 1..L : x_{s+j} <= x_s} for s = 1..N-L (MATLAB ``LocalRankNumber``)."""
     x = np.asarray(x, dtype=float)
     N = len(x)
+    if not 1 <= L < N:
+        raise ValueError("L must satisfy 1 <= L < len(x)")
     out = np.zeros(N - L, dtype=np.int64)
     for j in range(1, L + 1):
         out += x[j:N - L + j] <= x[:N - L]

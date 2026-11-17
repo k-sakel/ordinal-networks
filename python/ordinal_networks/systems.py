@@ -140,6 +140,7 @@ SYSTEMS = MAPS | FLOWS
 
 
 def get_system(name: str) -> System:
+    """Look up a system by name (case, spaces, ``-`` and ``_`` are ignored; common aliases accepted)."""
     flat = name.lower().replace("-", "").replace(" ", "").replace("_", "")
     lookup = {k.replace("_", ""): k for k in SYSTEMS}
     lookup.update({"roessler": "rossler", "roessler4d": "rossler4d", "bitshift": "dyadic",
@@ -151,6 +152,7 @@ def get_system(name: str) -> System:
 
 
 def parameters(name: str, regime: str | None = None) -> tuple:
+    """Parameter values of a named regime (default: the default regime of the system)."""
     s = get_system(name)
     regime = regime or s.default_regime
     if regime is None:

@@ -206,3 +206,203 @@ def test_small_helpers_edge_cases(x):
     assert on.recurrence.order_recurrence_plot(np.zeros(0, int), sparse=True).shape == (0, 0)
     with pytest.raises(ValueError, match="empty network"):
         on.OrdinalNetwork.from_edges([], []).random_walk(3)
+
+
+def test_conditional_entropy_uses_the_source_marginal():
+    # windows up, down: one transition. p(up) as a pattern frequency is 1/2, as a source it is 1,
+    # so the old pattern-frequency form gave -1 bit here
+    assert on.symbolize([1.0, 2.0, 1.0], 2).conditional_entropy() == 0.0
+    # windows up, up, down: from "up" the next pattern is up or down with probability 1/2 each
+    assert on.symbolize([1.0, 2.0, 3.0, 1.0], 2).conditional_entropy() == pytest.approx(1.0)
+    # gaps: every run loses its last window as a source; the value stays within [0, log2 m]
+    y = np.random.default_rng(1).standard_normal(3000)
+    y[::9] = np.nan
+    st = on.symbolize(y, 3)
+    T = st.network().T.toarray()
+    out = st.network().out_strength()
+    rows = -np.sum(np.where(T > 0, T * np.log2(np.where(T > 0, T, 1.0)), 0.0), axis=1)
+    assert st.conditional_entropy() == pytest.approx(float(np.sum(out / out.sum() * rows)))
+    assert 0.0 <= st.conditional_entropy() <= math.log2(3)
+
+
+def test_outgrowth_ratio_requires_matching_slide(x):
+    a = on.OrdinalSymbolizer(3, w=1).fit(x)
+    b = on.OrdinalSymbolizer(4, w=2).fit(x)
+    with pytest.raises(ValueError, match="share ranking, tau and w"):
+        on.entropy.outgrowth_ratio(a, b)
+
+
+def test_entropy_table_accepts_m1(x):
+    tab = on.entropy.entropy_table(on.OrdinalSymbolizer(1).sweep(x, [1, 2, 3]))
+    assert np.isnan(tab["TPE"][0]) and np.isfinite(tab["TPE"][1:]).all()
+
+
+def test_surrogate_input_validation_and_scale_free_fallback():
+    x = on.systems.generate("logistic", n=5000)
+    st = on.OrdinalSymbolizer(4).fit(x, keep_sequence=True)
+    walk = st.network().random_walk(500, seed=1)
+    with pytest.raises(ValueError, match="method must be"):
+        on.surrogates.reconstruct(walk, st, x, method="nearest")
+    with pytest.raises(ValueError, match="fitted on"):
+        on.surrogates.reconstruct(walk, st, x[:-1])
+    with pytest.raises(ValueError, match="outside the network"):
+        on.surrogates.reconstruct([0, st.n_patterns], st, x)
+    with pytest.raises(ValueError, match="at least m"):
+        on.surrogates.network_surrogate(st, x, 2)
+    # the surrogate of a rescaled series is the rescaled surrogate (fallback steps included)
+    for scale in (1e-9, 1e9):
+        xs = x * scale
+        sts = on.OrdinalSymbolizer(4).fit(xs, keep_sequence=True)
+        s, _ = on.surrogates.reconstruct(walk, sts, xs, seed=3)
+        assert (sts.nodes_of(on.OrdinalSymbolizer(4).encode(s)) == walk).mean() > 0.98
+
+
+def test_small_network_edge_cases():
+    loop = on.OrdinalNetwork.from_edges([0], [0])
+    assert loop.node_link_entropy(normalized=True).tolist() == [0.0]
+    with pytest.raises(ValueError, match="k must be"):
+        loop.n_cycles(0)
+    with pytest.raises(ValueError, match="unknown method"):
+        pytest.importorskip("igraph") and loop.communities("spectral")
+    dag = on.OrdinalNetwork.from_edges([0, 1], [1, 2])               # no cycles: rho(A) = 0
+    assert np.allclose(dag.centrality("katz"), [3.0, 2.0, 1.0])       # 1 + (number of out-paths)
+    with pytest.raises(ValueError, match="malformed CSR"):
+        on._core.random_walk(np.array([0, 2, 1]), np.array([0, 5]), np.array([1.0, 1.0]), 0, 5, 1)
+    with pytest.raises(ValueError, match="L must satisfy"):
+        on.metrics.local_rank_numbers([1.0, 2.0], 5)
+
+
+def test_mackey_glass_long_run_is_cheap_and_reproducible():
+    a = on.systems.generate("mackey_glass", n=4000, every=10, transient=2000)
+    b = on.systems.generate("mackey_glass", n=2000, every=10, transient=2000)
+    assert np.array_equal(a[:2000], b) and np.isfinite(a).all() and a.std() > 0.05
+
+
+def test_eigen_quantities_are_reproducible_for_sparse_solver():
+    x = on.systems.generate("henon", n=300_000)[:, 0]
+    net = on.OrdinalSymbolizer(14).fit(x).network()
+    assert net.n_nodes > 1500                                         # ARPACK path
+    assert net.spectral_radius() == net.spectral_radius.__func__(on.OrdinalSymbolizer(14).fit(x).network())
+
+
+# ------------------------------------------------------------- PR #2 review comments --
+
+def test_spectral_radius_is_exactly_zero_without_cycles():
+    # a path of 12 nodes: A is one nilpotent Jordan block, for which dense eigensolvers
+    # return |lambda| ~ eps**(1/12) ~ 0.05 instead of 0
+    k = 12
+    path = on.OrdinalNetwork.from_edges(np.arange(k - 1), np.arange(1, k))
+    assert path.is_acyclic() and path.spectral_radius() == 0.0
+    assert path.spectral_radius(log=True) == -math.inf
+    # default Katz alpha: the finite series 1 + (number of nodes reachable along the path)
+    assert np.allclose(path.centrality("katz"), np.arange(k, 0, -1))
+    assert not on.OrdinalNetwork.from_edges([0, 1], [1, 0]).is_acyclic()
+    assert not on.OrdinalNetwork.from_edges([0, 0], [0, 1]).is_acyclic()        # self-loop
+
+
+def test_entropies_for_m1_and_min_entropy(x):
+    st1 = on.OrdinalSymbolizer(1).fit(x)
+    assert st1.permutation_entropy(normalized=True) == 0.0
+    for a in (0.5, 1.0, 2.0, math.inf):
+        assert st1.renyi_entropy(a, normalized=True) == 0.0
+    assert st1.tsallis_entropy(2.0, normalized=True) == 0.0
+    st = on.OrdinalSymbolizer(3).fit(x)
+    p = st.pattern_probabilities
+    assert st.renyi_entropy(math.inf) == pytest.approx(-math.log2(p.max()))
+    # Renyi entropy is non-increasing in alpha and tends to the min-entropy
+    hs = [st.renyi_entropy(a) for a in (0.5, 1.0, 2.0, 50.0, math.inf)]
+    assert all(u >= v - 1e-12 for u, v in zip(hs, hs[1:]))
+    assert st.renyi_entropy(1e4) == pytest.approx(st.renyi_entropy(math.inf), abs=1e-3)
+    for bad in (-1.0, math.nan):
+        with pytest.raises(ValueError, match="alpha must be"):
+            st.renyi_entropy(bad)
+
+
+def test_from_edges_rejects_n_nodes_smaller_than_the_edge_list():
+    with pytest.raises(ValueError, match="refers to node 5"):
+        on.OrdinalNetwork.from_edges([0, 5], [1, 2], n_nodes=3)
+    assert on.OrdinalNetwork.from_edges([0, 5], [1, 2], n_nodes=9).n_nodes == 9
+
+
+def test_random_walk_validates_the_graph_once_and_stays_reproducible():
+    net = on.OrdinalSymbolizer(4).fit(np.random.default_rng(2).standard_normal(3000)).network()
+    a = net.random_walk(500, start=0, seed=7)
+    assert ("walk", True) in net._cache
+    assert np.array_equal(net.random_walk(500, start=0, seed=7), a)             # cached arrays, same walk
+    assert np.array_equal(net.random_walk(500, start=0, seed=7, weighted=False),
+                          on.OrdinalNetwork.from_matrix(net.A).random_walk(500, start=0, seed=7))
+    bad = on.OrdinalNetwork.from_edges([0, 1], [1, 0], [1.0, np.nan])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        bad.random_walk(5, start=0, seed=1)
+    # the cheap consistency checks run even when the full scan is skipped
+    with pytest.raises(ValueError, match="malformed CSR"):
+        on._core.random_walk(np.array([0, 1, 3]), np.array([1, 0]), np.array([1.0, 1.0]), 0, 5, 1, False)
+
+
+def test_failed_validation_is_not_cached():
+    bad = on.OrdinalNetwork.from_edges([0, 1], [1, 0], [1.0, np.nan])
+    for _ in range(3):                                   # every retry is validated again
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            bad.random_walk(5, start=0, seed=1)
+    assert ("walk", True) not in bad._cache
+    assert len(bad.random_walk(5, start=0, seed=1, weighted=False)) == 6       # unit weights are fine
+
+
+def test_walk_checks_visited_rows_even_without_full_validation():
+    w = np.ones(2)
+    # every walk from node 0 reaches the bad row on its second step
+    cases = [(np.array([0, 1, 0, 2]), np.array([1, 1])),      # decreasing indptr at row 1
+             (np.array([0, 1, 2]), np.array([1, 7])),         # column index out of range
+             (np.array([0, 1, 2]), np.array([1, -1]))]        # negative column index
+    for indptr, indices in cases:
+        with pytest.raises(ValueError, match="malformed CSR"):
+            on._core.random_walk(indptr, indices, w, 0, 10, 1, False)
+
+
+def test_eigen_quantities_of_a_network_without_cycles():
+    path = on.OrdinalNetwork.from_edges(np.arange(11), np.arange(1, 12))
+    for f in (path.stationary_distribution, path.lyapunov_sum, path.metric_entropy_rate,
+              lambda: path.centrality("eigenvector")):
+        with pytest.raises(ValueError, match="without cycles.*too short for this m"):
+            f()
+    assert np.isfinite(path.centrality("katz")).all()        # Katz is defined without cycles
+    loop = on.OrdinalNetwork.from_edges([0, 1], [1, 0])
+    assert loop.centrality("eigenvector").sum() == pytest.approx(1.0)
+    st = on.OrdinalSymbolizer(3).fit(np.arange(50.0))    # monotone series: one node with a self-loop
+    assert st.network().stationary_distribution().tolist() == [1.0]
+
+
+def test_entropy_table_survives_an_acyclic_pattern_length():
+    # 40 points of noise: at m = 8 every window is a new pattern, so that network is a path
+    y = np.random.default_rng(5).standard_normal(40)
+    sw = on.OrdinalSymbolizer(2).sweep(y, [2, 3, 8])
+    assert sw[8].network().is_acyclic() and not sw[2].network().is_acyclic()
+    tab = on.entropy.entropy_table(sw, spectral=True, lyapunov=True)
+    assert np.isfinite(tab["lyap"][:2]).all() and np.isnan(tab["lyap"][2])
+    assert np.isfinite(tab["ln_rho"][:2]).all() and tab["ln_rho"][2] == -math.inf
+    assert np.isfinite(tab["PE"]).all() and np.isfinite(tab["TPE"]).all()
+
+
+def test_entropy_table_builds_one_network_per_pattern_length(x, monkeypatch):
+    sw = on.OrdinalSymbolizer(2).sweep(x, [3, 4, 5])
+    ref = on.entropy.entropy_table(sw, spectral=True, lyapunov=True)
+    calls = []
+    real = on.OrdinalStatistics.network
+    monkeypatch.setattr(on.OrdinalStatistics, "network", lambda self: calls.append(self.m) or real(self))
+    tab = on.entropy.entropy_table(sw, spectral=True, lyapunov=True)
+    assert calls == [3, 4, 5]
+    assert np.array_equal(tab["ln_rho"], ref["ln_rho"]) and np.array_equal(tab["lyap"], ref["lyap"])
+    assert "ln_rho" not in on.entropy.entropy_table(sw, spectral=False, lyapunov=True)
+    assert "lyap" not in on.entropy.entropy_table(sw, spectral=True, lyapunov=False)
+
+
+def test_paper_scripts_import_from_any_working_directory(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).resolve().parent.parent / "paper" / "make_numbers.py"
+    code = ("import runpy, sys; ns = runpy.run_path(sys.argv[1], run_name='not_main'); "
+            "print(ns['H_HENON'], ns['sci'](9.7e-16))")
+    out = subprocess.run([sys.executable, "-I", "-c", code, str(script)], cwd=tmp_path, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split()[0] == "0.4651" and "10^{-15}" in out.stdout

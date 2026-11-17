@@ -2,7 +2,6 @@ import math
 
 import numpy as np
 import pytest
-import scipy.sparse as sp
 
 import ordinal_networks as on
 
